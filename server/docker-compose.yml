@@ -1,0 +1,24 @@
+version: "3.9"
+services:
+  db:
+    image: mysql:8.4
+    container_name: car_rental_mysql
+    environment:
+      MYSQL_DATABASE: car_rental
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - dbdata:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password --mysql-native-password=ON
+  adminer:
+    image: adminer:4
+    restart: always
+    ports:
+      - "8080:8080"
+volumes:
+  dbdata:
+
+

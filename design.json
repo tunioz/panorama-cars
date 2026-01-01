@@ -1,0 +1,671 @@
+{
+  "meta": {
+    "name": "Car Rental UI Template",
+    "description": "Design system and UI blueprint extracted from reference mock for a fully featured car rental website.",
+    "version": "1.0.0",
+    "generatedAt": "2026-01-01T00:00:00Z",
+    "source": "single reference screenshot provided by user",
+    "license": "MIT"
+  },
+  "theme": {
+    "palette": {
+      "primary": {
+        "50": "#ECF3FF",
+        "100": "#D7E7FF",
+        "200": "#AFCBFF",
+        "300": "#87B2FF",
+        "400": "#4D8BFF",
+        "500": "#2F74FF",
+        "600": "#1F63E6",
+        "700": "#184DB4",
+        "800": "#123C8A",
+        "900": "#0D2C63",
+        "DEFAULT": "#2F74FF"
+      },
+      "neutral": {
+        "0": "#FFFFFF",
+        "25": "#FCFCFD",
+        "50": "#F6F7F9",
+        "100": "#EEF1F5",
+        "200": "#E3E8EF",
+        "300": "#CDD5DF",
+        "400": "#9AA4B2",
+        "500": "#6B7280",
+        "600": "#4B5563",
+        "700": "#374151",
+        "800": "#111827",
+        "900": "#0B1220"
+      },
+      "accent": {
+        "green": "#16C784",
+        "red": "#F04438",
+        "amber": "#F59E0B",
+        "blue": "#2F74FF",
+        "cyan": "#2CC5F7"
+      },
+      "states": {
+        "success": "#16C784",
+        "warning": "#F59E0B",
+        "danger": "#F04438",
+        "info": "#2CC5F7"
+      },
+      "surface": {
+        "canvas": "#F1F3F7",
+        "elevated": "#FFFFFF",
+        "muted": "#F6F7F9",
+        "tint": "#F9FBFF"
+      },
+      "border": {
+        "subtle": "#EEF1F5",
+        "default": "#E3E8EF",
+        "strong": "#CDD5DF",
+        "focus": "#2F74FF"
+      },
+      "text": {
+        "primary": "#0B1220",
+        "secondary": "#4B5563",
+        "tertiary": "#6B7280",
+        "muted": "#9AA4B2",
+        "disabled": "#CDD5DF",
+        "onPrimary": "#FFFFFF",
+        "link": "#2F74FF",
+        "success": "#0F8E64",
+        "danger": "#B42318"
+      },
+      "overlay": {
+        "scrim": "rgba(11,18,32,0.40)"
+      }
+    },
+    "typography": {
+      "fontFamily": {
+        "sans": "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji",
+        "mono": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace"
+      },
+      "sizes": {
+        "xs": 12,
+        "sm": 13,
+        "md": 14,
+        "lg": 16,
+        "xl": 18,
+        "2xl": 20,
+        "3xl": 24,
+        "4xl": 28,
+        "5xl": 32
+      },
+      "weights": {
+        "regular": 400,
+        "medium": 500,
+        "semibold": 600,
+        "bold": 700
+      },
+      "leading": {
+        "tight": 1.15,
+        "snug": 1.25,
+        "normal": 1.45,
+        "relaxed": 1.6
+      },
+      "tracking": {
+        "tighter": -0.02,
+        "tight": -0.01,
+        "normal": 0,
+        "wide": 0.01
+      }
+    },
+    "spacing": {
+      "scale": [0, 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64],
+      "gapSm": 8,
+      "gapMd": 12,
+      "gapLg": 16,
+      "section": 24
+    },
+    "radii": {
+      "sm": 6,
+      "md": 10,
+      "lg": 14,
+      "xl": 18,
+      "pill": 999
+    },
+    "shadows": {
+      "sm": "0 1px 2px rgba(11,18,32,0.04), 0 1px 1px rgba(11,18,32,0.03)",
+      "md": "0 4px 12px rgba(11,18,32,0.08), 0 2px 4px rgba(11,18,32,0.04)",
+      "lg": "0 10px 24px rgba(11,18,32,0.10), 0 4px 8px rgba(11,18,32,0.06)"
+    },
+    "grid": {
+      "containerMax": 1440,
+      "columns": 12,
+      "gutter": 24,
+      "margin": 24
+    },
+    "zIndex": {
+      "base": 0,
+      "header": 10,
+      "overlay": 30,
+      "modal": 40,
+      "popover": 50
+    },
+    "breakpoints": {
+      "xs": 360,
+      "sm": 640,
+      "md": 900,
+      "lg": 1200,
+      "xl": 1440
+    },
+    "focus": {
+      "ringColor": "#2F74FF",
+      "ringWidth": 3,
+      "ringOffset": 1
+    }
+  },
+  "icons": {
+    "set": [
+      "home",
+      "search",
+      "filters",
+      "calendar",
+      "map",
+      "location",
+      "heart",
+      "heartFilled",
+      "user",
+      "settings",
+      "notification",
+      "menu",
+      "close",
+      "arrowLeft",
+      "arrowRight",
+      "chevronDown",
+      "star",
+      "car",
+      "engine",
+      "fuel",
+      "manual",
+      "automatic",
+      "distance",
+      "time",
+      "shield",
+      "toggle",
+      "plus",
+      "minus",
+      "camera"
+    ]
+  },
+  "layouts": {
+    "app_shell": {
+      "background": "{theme.palette.surface.canvas}",
+      "cornerRadius": "{theme.radii.lg}",
+      "shadow": "{theme.shadows.lg}",
+      "columns": [
+        {
+          "id": "navRail",
+          "minWidth": 72,
+          "maxWidth": 80,
+          "resizable": false,
+          "sticky": true,
+          "background": "{theme.palette.surface.elevated}"
+        },
+        {
+          "id": "filters",
+          "minWidth": 320,
+          "maxWidth": 360,
+          "resizable": true,
+          "background": "{theme.palette.surface.elevated}"
+        },
+        {
+          "id": "results",
+          "minWidth": 520,
+          "flex": 1,
+          "background": "{theme.palette.surface.elevated}"
+        },
+        {
+          "id": "details",
+          "minWidth": 600,
+          "maxWidth": 760,
+          "background": "{theme.palette.surface.elevated}"
+        }
+      ],
+      "gaps": {
+        "betweenColumns": 20,
+        "betweenCards": 16
+      },
+      "padding": 20
+    },
+    "responsive": {
+      "desktop": {
+        "visibleColumns": ["navRail", "filters", "results", "details"]
+      },
+      "tablet": {
+        "visibleColumns": ["navRail", "results"],
+        "detailsMode": "drawer",
+        "filtersMode": "modal"
+      },
+      "mobile": {
+        "visibleColumns": ["results"],
+        "detailsMode": "fullScreen",
+        "filtersMode": "bottomSheet",
+        "hideNavRail": true
+      }
+    }
+  },
+  "components": {
+    "controls": {
+      "button": {
+        "sizes": {
+          "sm": { "height": 32, "px": 12, "radius": "{theme.radii.md}" },
+          "md": { "height": 40, "px": 16, "radius": "{theme.radii.md}" },
+          "lg": { "height": 48, "px": 20, "radius": "{theme.radii.lg}" }
+        },
+        "variants": {
+          "primary": {
+            "bg": "{theme.palette.primary.DEFAULT}",
+            "fg": "{theme.palette.text.onPrimary}",
+            "hoverBg": "{theme.palette.primary.600}"
+          },
+          "secondary": {
+            "bg": "{theme.palette.surface.muted}",
+            "fg": "{theme.palette.text.primary}",
+            "border": "{theme.palette.border.default}",
+            "hoverBg": "{theme.palette.surface.elevated}"
+          },
+          "ghost": {
+            "bg": "transparent",
+            "fg": "{theme.palette.text.primary}",
+            "hoverBg": "{theme.palette.surface.muted}"
+          }
+        }
+      },
+      "input": {
+        "height": 40,
+        "radius": "{theme.radii.md}",
+        "bg": "{theme.palette.neutral.0}",
+        "border": "{theme.palette.border.default}",
+        "placeholder": "{theme.palette.text.muted}",
+        "fg": "{theme.palette.text.primary}",
+        "focusRing": "{theme.focus.ringColor}"
+      },
+      "select": {
+        "height": 40,
+        "radius": "{theme.radii.md}",
+        "menuRadius": "{theme.radii.lg}",
+        "bg": "{theme.palette.neutral.0}",
+        "border": "{theme.palette.border.default}"
+      },
+      "checkbox": {
+        "size": 18,
+        "radius": 5,
+        "checkedBg": "{theme.palette.primary.DEFAULT}",
+        "checkedFg": "{theme.palette.text.onPrimary}"
+      },
+      "radio": {
+        "size": 18,
+        "dot": 8,
+        "checked": "{theme.palette.primary.DEFAULT}"
+      },
+      "switch": {
+        "track": { "width": 44, "height": 24, "radius": 24 },
+        "thumb": { "size": 18, "elevation": "{theme.shadows.sm}" },
+        "onColor": "{theme.palette.primary.DEFAULT}",
+        "offColor": "{theme.palette.neutral.300}"
+      },
+      "segmented": {
+        "height": 32,
+        "radius": 10,
+        "bg": "{theme.palette.surface.muted}",
+        "item": {
+          "radius": 8,
+          "activeBg": "{theme.palette.neutral.0}",
+          "activeBorder": "{theme.palette.border.default}"
+        }
+      },
+      "slider": {
+        "trackHeight": 6,
+        "thumbSize": 16,
+        "active": "{theme.palette.primary.DEFAULT}",
+        "inactive": "{theme.palette.neutral.200}"
+      },
+      "chip": {
+        "height": 28,
+        "radius": 8,
+        "bg": "{theme.palette.surface.muted}",
+        "fg": "{theme.palette.text.secondary}",
+        "selectedBg": "{theme.palette.primary.50}",
+        "selectedBorder": "{theme.palette.primary.200}"
+      },
+      "badge": {
+        "radius": 8,
+        "variants": {
+          "success": { "bg": "#E9FBF4", "fg": "#0F8E64" },
+          "info": { "bg": "#EAF6FF", "fg": "#2F74FF" },
+          "warning": { "bg": "#FFF6E6", "fg": "#B45309" }
+        }
+      },
+      "tab": {
+        "height": 36,
+        "indicatorHeight": 2,
+        "inactiveFg": "{theme.palette.text.tertiary}",
+        "activeFg": "{theme.palette.text.primary}",
+        "indicator": "{theme.palette.primary.DEFAULT}"
+      }
+    },
+    "sidebar_rail": {
+      "width": 76,
+      "bg": "{theme.palette.neutral.0}",
+      "borderRight": "{theme.palette.border.default}",
+      "iconButton": {
+        "size": 44,
+        "radius": 12,
+        "hoverBg": "{theme.palette.surface.muted}",
+        "activeBg": "{theme.palette.primary.50}",
+        "activeFg": "{theme.palette.primary.DEFAULT}"
+      }
+    },
+    "filter_panel": {
+      "header": {
+        "title": "Filter by:",
+        "resetLabel": "Reset all"
+      },
+      "sections": [
+        {
+          "id": "search",
+          "type": "search",
+          "placeholder": "Search",
+          "icon": "search"
+        },
+        {
+          "id": "rentalType",
+          "type": "segmented",
+          "label": "Rental type",
+          "options": ["Any", "Per day", "Per hour"],
+          "default": "Per hour"
+        },
+        {
+          "id": "availableNow",
+          "type": "switch",
+          "label": "Available now only",
+          "default": false
+        },
+        {
+          "id": "pricePerHour",
+          "type": "range",
+          "label": "Price range / hour",
+          "min": 10,
+          "max": 100,
+          "default": [22, 99.5],
+          "unit": "$"
+        },
+        {
+          "id": "brand",
+          "type": "select",
+          "label": "Car brand",
+          "options": ["Any", "Ford", "Toyota", "Kia", "BMW", "Audi", "Tesla"],
+          "default": "Any",
+          "showCount": true
+        },
+        {
+          "id": "modelYear",
+          "type": "select",
+          "label": "Car model & year",
+          "options": ["Any", "2026", "2025", "2024", "2023", "2022", "2019–2021"],
+          "default": "Any"
+        },
+        {
+          "id": "bodyStyle",
+          "type": "checkbox-group",
+          "label": "Body style",
+          "options": ["Sedan", "Couple", "Pickup", "Crossover", "Wagon", "Hatchback", "Sport coupe", "Van"],
+          "preselected": ["Hatchback", "Crossover"]
+        },
+        {
+          "id": "transmission",
+          "type": "radio-group",
+          "label": "Transmission",
+          "options": ["Any", "Automatic", "Manual"],
+          "default": "Manual"
+        },
+        {
+          "id": "fuel",
+          "type": "checkbox-group",
+          "label": "Fuel type",
+          "options": ["Diesel", "Petrol", "Electric", "Hybrid"]
+        }
+      ]
+    },
+    "result_list": {
+      "header": {
+        "title": "96 vehicles to rent",
+        "sortOptions": ["Closest to me", "Price: Low to High", "Price: High to Low", "Newest"],
+        "defaultSort": "Closest to me"
+      },
+      "cardGap": 16
+    },
+    "car_card": {
+      "radius": "{theme.radii.lg}",
+      "shadow": "{theme.shadows.sm}",
+      "media": {
+        "ratio": "16:9",
+        "height": 160,
+        "radius": "{theme.radii.md}"
+      },
+      "badges": [
+        { "text": "4.7 (305)", "icon": "star", "variant": "info" },
+        { "text": "Available now", "variant": "success" },
+        { "text": "1.2km (2 min)", "icon": "time", "variant": "info" }
+      ],
+      "titleStyle": { "size": "{theme.typography.sizes.lg}", "weight": "semibold" },
+      "price": {
+        "label": "/hour",
+        "style": { "size": "{theme.typography.sizes.lg}", "weight": "semibold", "color": "{theme.palette.text.primary}" }
+      },
+      "specs": [
+        { "icon": "car", "label": "Hatchback" },
+        { "icon": "manual", "label": "Manual" },
+        { "icon": "fuel", "label": "Diesel" },
+        { "icon": "users", "label": "5" }
+      ],
+      "actions": {
+        "favorite": { "icon": "heart", "activeIcon": "heartFilled" }
+      }
+    },
+    "details_panel": {
+      "header": {
+        "locationPin": true,
+        "showTimezone": true,
+        "favorite": true,
+        "avatar": true
+      },
+      "gallery": {
+        "height": 220,
+        "gap": 12,
+        "controls": { "prevIcon": "arrowLeft", "nextIcon": "arrowRight" }
+      },
+      "tabs": ["Rent details", "Vehicle info", "Specifications", "Statistics", "Documents"],
+      "map_block": {
+        "height": 260,
+        "provider": "generic",
+        "showControls": ["zoom", "route", "location"]
+      },
+      "booking_panel": {
+        "fields": [
+          { "id": "pickup", "type": "datetime", "label": "Pick-up date & time" },
+          { "id": "dropoff", "type": "datetime", "label": "Drop-off date & time" },
+          { "id": "extraTime", "type": "switch", "label": "Extra time" }
+        ],
+        "insurance": {
+          "title": "Insurance",
+          "options": [
+            { "id": "none", "label": "No insurance", "price": 0 },
+            { "id": "vehicle", "label": "Vehicle protection", "price": 52 },
+            { "id": "liability", "label": "3rd party liability", "price": 62 }
+          ]
+        },
+        "summary": {
+          "lines": ["Insurance", "Sales taxes", "Total price"],
+          "cta": {
+            "primary": { "label": "Book vehicle", "brand": "Ford Focus" },
+            "secondary": { "label": "Free booking", "subtext": "10 minutes" }
+          }
+        }
+      }
+    }
+  },
+  "pages": {
+    "search": {
+      "route": "/",
+      "layout": ["sidebar_rail", "filter_panel", "result_list", "details_panel"]
+    },
+    "details": {
+      "route": "/cars/:id",
+      "layout": ["sidebar_rail", "details_panel"]
+    }
+  },
+  "data": {
+    "schemas": {
+      "car": {
+        "id": "string",
+        "brand": "string",
+        "model": "string",
+        "trim": "string",
+        "year": "number",
+        "pricePerHour": "number",
+        "pricePerDay": "number",
+        "rating": "number",
+        "reviewsCount": "number",
+        "distanceKm": "number",
+        "etaMin": "number",
+        "bodyStyle": "enum: Sedan | Hatchback | Crossover | Wagon | Coupe | Pickup | Van",
+        "transmission": "enum: Manual | Automatic",
+        "fuel": "enum: Diesel | Petrol | Electric | Hybrid",
+        "seats": "number",
+        "images": "string[]",
+        "location": { "lat": "number", "lng": "number", "city": "string", "country": "string" },
+        "availableNow": "boolean",
+        "favorite": "boolean"
+      },
+      "filterState": {
+        "query": "string",
+        "rentalType": "enum: Any | Per day | Per hour",
+        "availableNow": "boolean",
+        "pricePerHour": { "min": "number", "max": "number" },
+        "brand": "string | 'Any'",
+        "modelYear": "string | 'Any'",
+        "bodyStyle": "string[]",
+        "transmission": "string",
+        "fuel": "string[]",
+        "sort": "string"
+      },
+      "booking": {
+        "carId": "string",
+        "pickupAt": "ISODate",
+        "dropoffAt": "ISODate",
+        "extraTime": "boolean",
+        "insuranceId": "string",
+        "currency": "string",
+        "totals": { "subtotal": "number", "insurance": "number", "tax": "number", "total": "number" }
+      },
+      "insuranceOption": {
+        "id": "string",
+        "label": "string",
+        "price": "number",
+        "description": "string?"
+      }
+    },
+    "examples": {
+      "car": {
+        "id": "ford-focus-stline-115cv",
+        "brand": "Ford",
+        "model": "Focus",
+        "trim": "ST-Line 115CV",
+        "year": 2025,
+        "pricePerHour": 28,
+        "pricePerDay": 149,
+        "rating": 4.8,
+        "reviewsCount": 479,
+        "distanceKm": 0.78,
+        "etaMin": 2,
+        "bodyStyle": "Hatchback",
+        "transmission": "Manual",
+        "fuel": "Diesel",
+        "seats": 5,
+        "images": ["/img/cars/focus-1.jpg", "/img/cars/focus-2.jpg", "/img/cars/focus-3.jpg"],
+        "location": { "lat": 37.7749, "lng": -122.4194, "city": "San Francisco", "country": "US" },
+        "availableNow": true,
+        "favorite": false
+      },
+      "filterState": {
+        "query": "",
+        "rentalType": "Per hour",
+        "availableNow": false,
+        "pricePerHour": { "min": 22, "max": 98.5 },
+        "brand": "Any",
+        "modelYear": "Any",
+        "bodyStyle": ["Hatchback", "Crossover"],
+        "transmission": "Manual",
+        "fuel": ["Diesel"],
+        "sort": "Closest to me"
+      },
+      "booking": {
+        "carId": "ford-focus-stline-115cv",
+        "pickupAt": "2026-07-29T14:00:00-07:00",
+        "dropoffAt": "2026-07-29T17:00:00-07:00",
+        "extraTime": true,
+        "insuranceId": "vehicle",
+        "currency": "USD",
+        "totals": { "subtotal": 84, "insurance": 52, "tax": 13.6, "total": 149.6 }
+      }
+    }
+  },
+  "interactions": {
+    "filtering": {
+      "onChange": "debounce 250ms; refetch result_list; preserve scroll",
+      "persist": ["rentalType", "availableNow", "pricePerHour", "brand", "modelYear", "bodyStyle", "transmission", "fuel", "sort"]
+    },
+    "favorites": {
+      "toggle": "optimistic UI on car_card.heart; sync in background"
+    },
+    "booking": {
+      "calculateTotals": "total = (hours * pricePerHour) + insurance + tax; show live",
+      "validation": [
+        "dropoffAt > pickupAt",
+        "min duration 30m for per-hour",
+        "respect availability window"
+      ],
+      "cta": {
+        "primary": { "action": "open checkout / create reservation" },
+        "secondary": { "action": "hold vehicle for 10 minutes" }
+      }
+    },
+    "tabs": {
+      "activation": "onClick or onFocus+Enter; underline indicator moves with easing 180ms"
+    },
+    "map": {
+      "route": "show route from user to car; distance and ETA badges"
+    }
+  },
+  "i18n": {
+    "defaultLocale": "en-US",
+    "currency": "USD",
+    "units": { "distance": "mi|km", "speed": "mph|km/h" },
+    "numberFormat": { "decimals": 2 }
+  },
+  "a11y": {
+    "contrastTargets": {
+      "textOnSurface": 4.5,
+      "secondaryText": 3,
+      "onPrimary": 4.5
+    },
+    "focus": {
+      "visible": true,
+      "style": { "color": "{theme.focus.ringColor}", "width": "{theme.focus.ringWidth}" }
+    },
+    "hitAreas": { "minSize": 44 }
+  },
+  "export": {
+    "cssVariables": {
+      "--color-primary": "{theme.palette.primary.DEFAULT}",
+      "--color-text": "{theme.palette.text.primary}",
+      "--radius-md": "{theme.radii.md}",
+      "--shadow-md": "{theme.shadows.md}"
+    },
+    "tailwindPresetHint": "Map tokens to Tailwind theme if desired."
+  }
+}
+
