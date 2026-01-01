@@ -5,6 +5,10 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import multer from 'multer';
+import sharp from 'sharp';
+import path from 'path';
+import fs from 'fs';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -14,10 +18,33 @@ const PORT = process.env.PORT || 5175;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5174';
 
-app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
-app.use(helmet());
+// Be permissive during development to avoid CORS issues from the embedded browser
+app.use(cors({ origin: true, credentials: true }));
+app.options('*', cors({ origin: true, credentials: true }));
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('dev'));
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+// Upload helpers
+const uploadRoot = path.join(process.cwd(), 'uploads', 'cars');
+fs.mkdirSync(uploadRoot, { recursive: true });
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const carId = req.params.id;
+    const dir = path.join(uploadRoot, carId);
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+    const base = `img_${Date.now()}_${Math.floor(Math.random()*1e6)}${ext}`;
+    cb(null, base);
+  }
+});
+const upload = multer({ storage });
 
 // Helpers
 function signJwt(payload) {
@@ -60,26 +87,107 @@ app.post('/auth/login', async (req, res) => {
 // Cars
 app.get('/api/cars', async (req, res) => {
   const list = await prisma.car.findMany({ orderBy: { createdAt: 'desc' } });
-  res.json(list);
+  const normalized = list.map(c => ({ ...c, images: safeParse(c.images) }));
+  res.json(normalized);
 });
 app.get('/api/cars/:id', async (req, res) => {
   const c = await prisma.car.findUnique({ where: { id: req.params.id } });
   if (!c) return res.status(404).json({ error: 'Not found' });
-  res.json(c);
+  res.json({ ...c, images: safeParse(c.images) });
 });
 app.post('/api/cars', async (req, res) => {
-  const created = await prisma.car.create({ data: req.body });
+  const b = req.body || {};
+  const data = {
+    brand: b.brand,
+    model: b.model,
+    trim: b.trim || null,
+    pricePerHour: b.pricePerHour ?? 0,
+    pricePerDay: b.pricePerDay ?? null,
+    bodyStyle: b.bodyStyle || null,
+    transmission: b.transmission || null,
+    fuel: b.fuel || null,
+    seats: b.seats ?? null,
+    type: b.type || null,
+    status: b.status || 'AVAILABLE',
+    images: Array.isArray(b.images) ? JSON.stringify(b.images) : (typeof b.images === 'string' ? b.images : null)
+  };
+  const created = await prisma.car.create({ data });
   await logAction(null, 'car.create', { id: created.id });
   res.status(201).json(created);
 });
 app.put('/api/cars/:id', async (req, res) => {
-  const updated = await prisma.car.update({ where: { id: req.params.id }, data: req.body });
+  const b = req.body || {};
+  const data = {
+    brand: b.brand,
+    model: b.model,
+    trim: b.trim || null,
+    pricePerHour: b.pricePerHour ?? 0,
+    pricePerDay: b.pricePerDay ?? null,
+    bodyStyle: b.bodyStyle || null,
+    transmission: b.transmission || null,
+    fuel: b.fuel || null,
+    seats: b.seats ?? null,
+    type: b.type || null,
+    status: b.status || 'AVAILABLE',
+    images: Array.isArray(b.images) ? JSON.stringify(b.images) : (typeof b.images === 'string' ? b.images : null)
+  };
+  const updated = await prisma.car.update({ where: { id: req.params.id }, data });
   await logAction(null, 'car.update', { id: updated.id });
   res.json(updated);
 });
 app.delete('/api/cars/:id', async (req, res) => {
   await prisma.car.delete({ where: { id: req.params.id } });
   await logAction(null, 'car.delete', { id: req.params.id });
+  res.status(204).end();
+});
+
+// Car images upload
+function safeParse(str) {
+  try { return JSON.parse(str || '[]'); } catch { return []; }
+}
+async function makeThumb(srcPath, destPath) {
+  await sharp(srcPath).resize(320, 200, { fit: 'cover' }).jpeg({ quality: 80 }).toFile(destPath);
+}
+app.post('/api/cars/:id/images', upload.array('images', 10), async (req, res) => {
+  const carId = req.params.id;
+  const car = await prisma.car.findUnique({ where: { id: carId } });
+  if (!car) return res.status(404).json({ error: 'Car not found' });
+  const existing = safeParse(car.images);
+  const dirRel = `/uploads/cars/${carId}`;
+  for (const file of req.files || []) {
+    const dirAbs = path.dirname(file.path);
+    const base = path.basename(file.path);
+    const thumbName = `thumb_${base.replace(path.extname(base), '.jpg')}`;
+    const thumbAbs = path.join(dirAbs, thumbName);
+    try {
+      await makeThumb(file.path, thumbAbs);
+      existing.push({ large: `${dirRel}/${base}`, thumb: `${dirRel}/${thumbName}` });
+    } catch (e) {
+      // If thumbnail generation fails (e.g., unsupported HEIC), fall back to using the original as thumb
+      console.error('Thumbnail generation failed, falling back to original:', e?.message || e);
+      existing.push({ large: `${dirRel}/${base}`, thumb: `${dirRel}/${base}` });
+    }
+  }
+  const updated = await prisma.car.update({ where: { id: carId }, data: { images: JSON.stringify(existing) } });
+  res.json({ images: existing });
+});
+app.delete('/api/cars/:id/images', async (req, res) => {
+  const carId = req.params.id;
+  const name = req.query.name;
+  const car = await prisma.car.findUnique({ where: { id: carId } });
+  if (!car) return res.status(404).json({ error: 'Car not found' });
+  const list = safeParse(car.images);
+  const next = list.filter(img => img.large !== name && img.thumb !== name);
+  // Try removing files
+  const toRemove = list.filter(img => img.large === name || img.thumb === name);
+  for (const img of toRemove) {
+    for (const p of [img.large, img.thumb]) {
+      if (!p) continue;
+      const abs = path.join(process.cwd(), p.replace(/^\//,''));
+      fs.existsSync(abs) && fs.unlinkSync(abs);
+    }
+  }
+  await prisma.car.update({ where: { id: carId }, data: { images: JSON.stringify(next) } });
   res.status(204).end();
 });
 
@@ -123,6 +231,36 @@ app.delete('/api/params/:id', async (req, res) => {
   await prisma.carParamDef.delete({ where: { id: req.params.id } });
   await logAction(null, 'param.delete', { id: req.params.id });
   res.status(204).end();
+});
+
+// Car parameter values
+app.get('/api/cars/:id/params', async (req, res) => {
+  const defs = await prisma.carParamDef.findMany({ orderBy: { name: 'asc' } });
+  const values = await prisma.carParamValue.findMany({ where: { carId: req.params.id } });
+  const byId = Object.fromEntries(values.map(v => [v.paramId, v]));
+  const result = defs.map(d => ({
+    id: d.id,
+    name: d.name,
+    type: d.type,
+    options: d.type === 'ENUM' ? (typeof d.options === 'string' ? JSON.parse(d.options || '[]') : (d.options || [])) : null,
+    unit: d.unit || null,
+    value: byId[d.id]?.valueEnum || byId[d.id]?.valueNum || byId[d.id]?.valueText || null
+  }));
+  res.json(result);
+});
+app.put('/api/cars/:id/params', async (req, res) => {
+  const items = req.body?.items || [];
+  for (const it of items) {
+    const data = { carId: req.params.id, paramId: it.paramId, valueText: null, valueNum: null, valueEnum: null };
+    if (it.type === 'ENUM') data.valueEnum = it.value || null;
+    else if (it.type === 'NUMBER') data.valueNum = it.value !== '' && it.value !== null ? Number(it.value) : null;
+    else data.valueText = it.value || null;
+    const existing = await prisma.carParamValue.findFirst({ where: { carId: req.params.id, paramId: it.paramId } });
+    if (existing) await prisma.carParamValue.update({ where: { id: existing.id }, data });
+    else await prisma.carParamValue.create({ data });
+  }
+  await logAction(null, 'car.params.update', { id: req.params.id, count: items.length });
+  res.json({ ok: true });
 });
 
 // Reservations

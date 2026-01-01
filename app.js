@@ -153,6 +153,7 @@
         id: c.id,
         brand: c.brand, model: c.model, trim: c.trim,
         pricePerHour: c.pricePerHour,
+        pricePerDay: c.pricePerDay,
         transmission: c.transmission === 'AUTOMATIC' ? 'Automatic' : 'Manual',
         fuel: c.fuel ? c.fuel.charAt(0) + c.fuel.slice(1).toLowerCase() : 'Diesel',
         seats: c.seats || 5,
@@ -778,7 +779,7 @@
       </div>
       <div style="padding:16px;">
         <table class="table">
-          <thead><tr><th>Марка</th><th>Модел</th><th>Тип</th><th>Цена/ч</th><th>Статус</th><th></th></tr></thead>
+          <thead><tr><th>Марка</th><th>Модел</th><th>Тип</th><th>Цена/ч</th><th>Цена/ден (€)</th><th>Статус</th><th></th></tr></thead>
           <tbody id="carRows"></tbody>
         </table>
       </div>
@@ -786,56 +787,202 @@
     function draw() {
       $('#carRows').innerHTML = cars.map(c => `
         <tr>
-          <td>${c.brand}</td><td>${c.model}</td><td>${c.type}</td><td>$${c.pricePerHour}</td>
+          <td>${c.brand}</td><td>${c.model}</td><td>${c.type}</td><td>$${c.pricePerHour||0}</td><td>€${c.pricePerDay||0}</td>
           <td><select data-status="${c.id}" class="select" style="height:32px;">
             ${['наличен','в сервиз','резервиран'].map(s => `<option ${c.status===s?'selected':''}>${s}</option>`).join('')}
           </select></td>
           <td><button class="btn-secondary" data-edit="${c.id}" style="height:32px;">Редакция</button></td>
         </tr>
       `).join('');
-      $$('[data-status]').forEach(s => s.onchange = () => {
-        const id = s.getAttribute('data-status'); const car = cars.find(x => x.id === id); car.status = s.value; storage.set('cr_cars', cars);
+      $$('[data-status]').forEach(s => s.onchange = async () => {
+        const id = s.getAttribute('data-status'); const car = cars.find(x => x.id === id); car.status = s.value;
+        try { await apiFetch(`/api/cars/${id}`, { method: 'PUT', body: JSON.stringify(car) }); } catch {}
+        storage.set('cr_cars', cars);
       });
       $$('[data-edit]').forEach(b => b.onclick = () => editCar(b.getAttribute('data-edit')));
     }
+    async function reload() {
+      const list = await fetchCarsFromApi();
+      if (list) cars = list;
+      draw();
+    }
     function editCar(id) {
-      const car = cars.find(c => c.id === id) || { id: uid(), brand:'', model:'', trim:'', pricePerHour:25, type:'Лека кола', status:'наличен' };
-      const isNew = !cars.find(c => c.id === id);
-      root.innerHTML = adminNav('cars') + `
-        <div class="header"><h2>${isNew?'Добавяне':'Редакция'} на кола</h2></div>
-        <div style="padding:16px; display:grid; gap:12px;">
-          <div class="grid-3">
-            <input id="cBrand" class="input" placeholder="Марка" value="${car.brand}">
-            <input id="cModel" class="input" placeholder="Модел" value="${car.model}">
-            <input id="cTrim" class="input" placeholder="Версия" value="${car.trim||''}">
+      const existing = cars.find(c => c.id === id);
+      const car = existing || { id: uid(), brand:'', model:'', trim:'', pricePerHour:25, type:'Лека кола', status:'наличен', images: [] };
+      const isNew = !existing;
+      async function loadCarFromApi() {
+        // Винаги зареждаме свежи данни от API (списъкът може да няма images и други полета)
+        try { const apiCar = await fetch(`${API_BASE}/api/cars/${id}`).then(r => r.json()); Object.assign(car, apiCar); } catch {}
+      }
+      async function loadParamDefsWithValues() {
+        try {
+          const defs = await apiFetch('/api/params');
+          let values = [];
+          if (!isNew) values = await apiFetch(`/api/cars/${car.id}/params`);
+          return defs.map(d => {
+            const v = values.find(x => x.id === d.id);
+            return { ...d, value: v?.value ?? null };
+          });
+        } catch { return []; }
+      }
+      (async () => {
+        await loadCarFromApi();
+        const defs = await loadParamDefsWithValues();
+        root.innerHTML = adminNav('cars') + `
+          <div class="header"><h2>${isNew?'Добавяне':'Редакция'} на кола</h2></div>
+          <div style="padding:16px; display:grid; gap:12px;">
+            <div class="grid-3">
+              <input id="cBrand" class="input" placeholder="Марка" value="${car.brand}">
+              <input id="cModel" class="input" placeholder="Модел" value="${car.model}">
+              <select id="cStatus" class="select">
+                ${['наличен','в сервиз'].map(s => `<option ${car.status===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+            </div>
+            <div class="grid-3">
+              <div>
+                <div class="section-title">Цена на ден (€)</div>
+                <input id="cPriceDay" type="number" class="input" placeholder="€" value="${car.pricePerDay ?? ''}">
+              </div>
+            </div>
+            <div class="panel" style="padding:12px;">
+              <div class="section-title">Снимки</div>
+              <input id="imgInput" type="file" accept="image/*" multiple class="input">
+              <div id="imgGrid" class="results-grid" style="grid-template-columns: repeat(4, minmax(120px,1fr)); max-height:unset;"></div>
+            </div>
+            <div class="panel" style="padding:12px;">
+              <div class="section-title">Параметри</div>
+              <div id="paramGrid" class="grid-3"></div>
+            </div>
+            <div class="row" style="justify-content:space-between;">
+              <a class="btn-secondary" href="#/admin/cars">Отказ</a>
+              <button class="btn-primary" id="saveCar">Запази</button>
+            </div>
           </div>
-          <div class="grid-3">
-            <select id="cType" class="select">
-              ${['Лека кола','Джип','Товарен бус'].map(t => `<option ${car.type===t?'selected':''}>${t}</option>`).join('')}
-            </select>
-            <input id="cPrice" type="number" class="input" placeholder="Цена/ч" value="${car.pricePerHour}">
-            <select id="cStatus" class="select">
-              ${['наличен','в сервиз','резервиран'].map(s => `<option ${car.status===s?'selected':''}>${s}</option>`).join('')}
-            </select>
-          </div>
-          <div class="row" style="justify-content:space-between;">
-            <a class="btn-secondary" href="#/admin/cars">Отказ</a>
-            <button class="btn-primary" id="saveCar">Запази</button>
-          </div>
-        </div>
-      `;
-      $('#saveCar').onclick = () => {
-        Object.assign(car, {
-          brand: $('#cBrand').value, model: $('#cModel').value, trim: $('#cTrim').value,
-          type: $('#cType').value, pricePerHour: Number($('#cPrice').value || 0),
-          status: $('#cStatus').value
-        });
-        if (isNew) cars.push(car);
-        storage.set('cr_cars', cars); navigate('#/admin/cars');
-      };
+        `;
+        function renderImages() {
+          const grid = $('#imgGrid');
+          const imgs = (car.images || []);
+          const toAbs = (p) => p && p.startsWith('/') ? `${API_BASE}${p}` : p;
+          const isDisplayable = (p) => {
+            if (!p) return false;
+            const ext = p.split('.').pop().toLowerCase();
+            return ['jpg','jpeg','png','webp','gif'].includes(ext);
+          };
+          const getSrc = (im) => {
+            const t = toAbs(im.thumb);
+            const l = toAbs(im.large);
+            if (isDisplayable(t)) return t;
+            if (isDisplayable(l)) return l;
+            return null;
+          };
+          grid.innerHTML = imgs.map(im => `
+            <div class="card" style="overflow:hidden;">
+              ${(() => {
+                const src = getSrc(im);
+                return src
+                  ? `<img src="${src}" alt="" style="width:100%;height:120px;object-fit:cover;">`
+                  : `<div style="width:100%;height:120px;display:grid;place-items:center;background:#f6f7f9;color:#9aa4b2;">Неподдържан формат</div>`;
+              })()}
+              <div class="row" style="padding:8px;justify-content:flex-end;">
+                <button class="btn-secondary" data-del="${im.large}" style="height:32px;">Премахни</button>
+              </div>
+            </div>
+          `).join('');
+          $$('[data-del]').forEach(b => b.onclick = async () => {
+            try {
+              const target = b.getAttribute('data-del');
+              // Optimistic remove from local state for instant UI response
+              car.images = (car.images || []).filter(im => im.large !== target && im.thumb !== target);
+              renderImages();
+              await apiFetch(`/api/cars/${car.id}/images?name=${encodeURIComponent(target)}`, { method: 'DELETE' });
+              // Bust cache to avoid stale 304
+              const fresh = await fetch(`${API_BASE}/api/cars/${car.id}?t=${Date.now()}`, {
+                headers: { accept: 'application/json', 'cache-control': 'no-cache' },
+                cache: 'no-store'
+              }).then(r=>r.json());
+              car.images = fresh.images || [];
+              renderImages();
+            } catch {
+              // If request fails, soft-refresh from API to reconcile state
+              try {
+                const fresh = await fetch(`${API_BASE}/api/cars/${car.id}?t=${Date.now()}`, {
+                  headers: { accept: 'application/json', 'cache-control': 'no-cache' },
+                  cache: 'no-store'
+                }).then(r=>r.json());
+                car.images = fresh.images || [];
+                renderImages();
+              } catch {}
+            }
+          });
+        }
+        renderImages();
+        // Upload handler
+        $('#imgInput').onchange = async (e) => {
+          if (!car.id || isNew) {
+            // create car first
+            await saveBasics(true);
+          }
+          const files = Array.from(e.target.files || []);
+          if (!files.length) return;
+          const fd = new FormData();
+          files.forEach(f => fd.append('images', f));
+          await fetch(`${API_BASE}/api/cars/${car.id}/images`, { method: 'POST', body: fd }).then(r => r.json());
+          const fresh = await fetch(`${API_BASE}/api/cars/${car.id}`).then(r=>r.json());
+          car.images = fresh.images || [];
+          renderImages();
+          e.target.value = '';
+        };
+        // Parameters form
+        const pGrid = $('#paramGrid');
+        pGrid.innerHTML = defs.map(d => {
+          if (d.type === 'ENUM') {
+            const opts = (d.options||[]).map(o => `<option ${d.value===o?'selected':''}>${o}</option>`).join('');
+            return `<div><div class="section-title">${d.name}</div><select class="select" data-param="${d.id}" data-type="ENUM"><option value="">—</option>${opts}</select></div>`;
+          } else if (d.type === 'NUMBER') {
+            return `<div><div class="section-title">${d.name}${d.unit?' ('+d.unit+')':''}</div><input class="input" type="number" step="any" value="${d.value??''}" data-param="${d.id}" data-type="NUMBER"></div>`;
+          } else {
+            return `<div><div class="section-title">${d.name}</div><input class="input" value="${d.value??''}" data-param="${d.id}" data-type="TEXT"></div>`;
+          }
+        }).join('');
+        async function saveBasics(creating=false) {
+          Object.assign(car, {
+            brand: $('#cBrand').value, model: $('#cModel').value,
+            pricePerDay: $('#cPriceDay').value !== '' ? Number($('#cPriceDay').value) : null,
+            status: $('#cStatus').value
+          });
+          if (creating && isNew) {
+            const created = await apiFetch('/api/cars', { method: 'POST', body: JSON.stringify(car) });
+            car.id = created.id;
+          } else {
+            await apiFetch(`/api/cars/${car.id}`, { method: 'PUT', body: JSON.stringify(car) });
+          }
+        }
+        $('#saveCar').onclick = async () => {
+          const btn = $('#saveCar');
+          btn.disabled = true; const prevText = btn.textContent; btn.textContent = 'Запис...';
+          try {
+            if (!$('#cBrand').value.trim() || !$('#cModel').value.trim()) throw new Error('Моля, попълнете Марка и Модел');
+            await saveBasics(isNew);
+            if (!car.id) throw new Error('Създаването не беше успешно.');
+            // Save params
+            const items = $$('#paramGrid [data-param]').map(el => {
+              const paramId = el.getAttribute('data-param');
+              const type = el.getAttribute('data-type');
+              const val = el.tagName === 'SELECT' ? (el.value || null) : (el.value ?? null);
+              return { paramId, type, value: val };
+            });
+            await apiFetch(`/api/cars/${car.id}/params`, { method: 'PUT', body: JSON.stringify({ items }) });
+            navigate('#/admin/cars');
+          } catch (e) {
+            alert(e.message || 'Грешка при запис.');
+          } finally {
+            btn.disabled = false; btn.textContent = prevText;
+          }
+        };
+      })();
     }
     $('#addCar').onclick = () => editCar(uid());
-    draw();
+    reload();
   }
   function renderAdminParams() {
     mountAdminIfNeeded(true);
