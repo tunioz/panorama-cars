@@ -68,6 +68,52 @@ function auth(requiredRole) {
 async function logAction(userId, action, meta) {
   try { await prisma.log.create({ data: { userId, action, meta } }); } catch (e) { /* ignore */ }
 }
+function normalizeItems(items) {
+  if (typeof items === 'string') {
+    try { items = JSON.parse(items); } catch { items = []; }
+  }
+  if (!Array.isArray(items)) return [];
+  return items.map(it => {
+    const qty = Number(it.qty ?? it.quantity ?? 1);
+    const unitPrice = Number(it.unitPrice ?? it.price ?? 0);
+    const vatRate = Number(it.vatRate ?? 20);
+    const totalNet = qty * unitPrice;
+    const totalVat = totalNet * (vatRate / 100);
+    const totalGross = totalNet + totalVat;
+    return {
+      description: it.description || 'Услуга',
+      qty,
+      unitPrice,
+      vatRate,
+      totalNet,
+      totalVat,
+      totalGross
+    };
+  });
+}
+function calcTotals(items) {
+  const subtotal = items.reduce((s, it) => s + (it.totalNet || 0), 0);
+  const vatAmount = items.reduce((s, it) => s + (it.totalVat || 0), 0);
+  const total = items.reduce((s, it) => s + (it.totalGross || 0), 0);
+  return { subtotal, vatAmount, total };
+}
+function fmtDateBg(d) {
+  try { return new Date(d).toLocaleDateString('bg-BG'); } catch { return ''; }
+}
+async function generateInvoiceNumber(type = 'PROFORMA', issueDate = new Date()) {
+  const year = new Date(issueDate).getFullYear();
+  const prefix = `${type === 'INVOICE' ? 'INV' : 'PRO'}-${year}-`;
+  const last = await prisma.invoice.findFirst({
+    where: { type, number: { startsWith: prefix } },
+    orderBy: { number: 'desc' }
+  });
+  let next = 1;
+  if (last?.number) {
+    const m = last.number.match(/-(\\d+)$/);
+    if (m) next = Number(m[1]) + 1;
+  }
+  return `${prefix}${String(next).padStart(5, '0')}`;
+}
 
 // Health
 app.get('/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
@@ -265,12 +311,19 @@ app.put('/api/cars/:id/params', async (req, res) => {
 
 // Reservations
 app.get('/api/reservations', async (req, res) => {
-  const list = await prisma.reservation.findMany({ orderBy: { createdAt: 'desc' } });
+  const list = await prisma.reservation.findMany({
+    orderBy: { createdAt: 'desc' },
+    include: { car: true }
+  });
   res.json(list);
 });
 app.post('/api/reservations', async (req, res) => {
   const data = req.body;
+  // simple seq: max+1
+  const maxSeq = await prisma.reservation.aggregate({ _max: { seq: true } });
+  const nextSeq = (maxSeq._max.seq || 0) + 1;
   const created = await prisma.reservation.create({ data: {
+    seq: nextSeq,
     carId: data.carId,
     from: new Date(data.from),
     to: new Date(data.to),
@@ -285,12 +338,27 @@ app.post('/api/reservations', async (req, res) => {
     invoiceType: data.invoice?.type || null,
     invoiceName: data.invoice?.name || null,
     invoiceNum: data.invoice?.num || null,
+    invoiceEgn: data.invoice?.egn || null,
+    invoiceVat: data.invoice?.vat || null,
+    invoiceMol: data.invoice?.mol || null,
+    invoiceBank: data.invoice?.bank || null,
+    invoiceIban: data.invoice?.iban || null,
+    invoiceBic: data.invoice?.bic || null,
     invoiceAddr: data.invoice?.addr || null,
     invoiceEmail: data.invoice?.email || null,
     total: data.total || 0
   }});
-  await logAction(null, 'reservation.create', { id: created.id });
+  await logAction(null, 'reservation.create', { id: created.id, seq: nextSeq });
   res.status(201).json(created);
+});
+
+app.get('/api/reservations/:id', async (req, res) => {
+  const reservation = await prisma.reservation.findUnique({
+    where: { id: req.params.id },
+    include: { car: true }
+  });
+  if (!reservation) return res.status(404).json({ error: 'Not found' });
+  res.json(reservation);
 });
 app.patch('/api/reservations/:id/status', async (req, res) => {
   const { status } = req.body;
@@ -300,16 +368,146 @@ app.patch('/api/reservations/:id/status', async (req, res) => {
 });
 
 // Invoices
-app.post('/api/invoices/:reservationId/issue', async (req, res) => {
-  const reservationId = req.params.reservationId;
-  const reservation = await prisma.reservation.findUnique({ where: { id: reservationId } });
+app.get('/api/invoices', async (req, res) => {
+  const reservationId = req.query.reservationId;
+  const where = reservationId ? { reservationId: String(reservationId) } : {};
+  const list = await prisma.invoice.findMany({
+    where,
+    orderBy: { issueDate: 'desc' },
+    include: { reservation: { include: { car: true } } }
+  });
+  const mapped = list.map(inv => ({ ...inv, items: safeParse(inv.items) }));
+  res.json(mapped);
+});
+app.get('/api/invoices/:id', async (req, res) => {
+  const inv = await prisma.invoice.findUnique({
+    where: { id: req.params.id },
+    include: { reservation: { include: { car: true } } }
+  });
+  if (!inv) return res.status(404).json({ error: 'Not found' });
+  res.json({ ...inv, items: safeParse(inv.items) });
+});
+app.post('/api/invoices', async (req, res) => {
+  const body = req.body || {};
+  const reservationId = body.reservationId;
+  if (!reservationId) return res.status(400).json({ error: 'reservationId is required' });
+  const reservation = await prisma.reservation.findUnique({ where: { id: reservationId }, include: { car: true } });
   if (!reservation) return res.status(404).json({ error: 'Reservation not found' });
-  const number = `INV-${new Date().getFullYear()}-${Math.floor(Math.random()*900000+100000)}`;
-  const total = reservation.total || 0;
-  const invoice = await prisma.invoice.create({ data: { reservationId, number, total, paid: false } });
-  await prisma.reservation.update({ where: { id: reservationId }, data: { status: 'INVOICED' } });
-  await logAction(null, 'invoice.issue', { id: invoice.id, reservationId });
-  res.status(201).json(invoice);
+  const company = await prisma.companyInfo.findFirst();
+  const type = body.type || 'PROFORMA';
+  const issueDate = body.issueDate ? new Date(body.issueDate) : new Date();
+  const dueDate = body.dueDate ? new Date(body.dueDate) : null;
+  let items = normalizeItems(body.items);
+  if (!items.length) {
+    const days = Math.max(1, Math.ceil((new Date(reservation.to) - new Date(reservation.from)) / 86400000));
+    const unitPrice = reservation.total && days ? reservation.total / days : reservation.car?.pricePerDay || 0;
+    items = normalizeItems([{
+      description: `Наем на автомобил ${reservation.car?.brand || ''} ${reservation.car?.model || ''} (${fmtDateBg(reservation.from)} → ${fmtDateBg(reservation.to)})`,
+      qty: days,
+      unitPrice,
+      vatRate: 20
+    }]);
+  }
+  const { subtotal, vatAmount, total } = calcTotals(items);
+  const number = body.number || await generateInvoiceNumber(type, issueDate);
+  const data = {
+    reservationId,
+    type,
+    number,
+    issueDate,
+    dueDate,
+    currency: body.currency || 'EUR',
+    paymentMethod: body.paymentMethod || body.payment || null,
+    paymentTerms: body.paymentTerms || body.terms || null,
+    status: body.status || 'DRAFT',
+    notes: body.notes || null,
+    supplierName: company?.name || 'Фирма',
+    supplierEik: company?.eik || '',
+    supplierVat: company?.vat || null,
+    supplierAddr: company?.address || '',
+    supplierMol: company?.mol || null,
+    supplierEmail: company?.email || null,
+    supplierPhone: company?.phone || null,
+    supplierBank: company?.bank || null,
+    supplierIban: company?.iban || null,
+    supplierBic: company?.bic || null,
+    buyerType: body.buyerType || reservation.invoiceType || 'individual',
+    buyerName: body.buyerName || reservation.invoiceName || reservation.driverName || '',
+    buyerEik: body.buyerEik || reservation.invoiceNum || null,
+    buyerVat: body.buyerVat || reservation.invoiceVat || null,
+    buyerEgn: body.buyerEgn || reservation.invoiceEgn || null,
+    buyerMol: body.buyerMol || reservation.invoiceMol || null,
+    buyerAddr: body.buyerAddr || reservation.invoiceAddr || null,
+    buyerEmail: body.buyerEmail || reservation.invoiceEmail || null,
+    buyerBank: body.buyerBank || reservation.invoiceBank || null,
+    buyerIban: body.buyerIban || reservation.invoiceIban || null,
+    buyerBic: body.buyerBic || reservation.invoiceBic || null,
+    items: JSON.stringify(items),
+    subtotal,
+    vatAmount,
+    total
+  };
+  const created = await prisma.invoice.create({ data });
+  if (data.status === 'PAID') {
+    await prisma.reservation.update({ where: { id: reservationId }, data: { status: 'paid' } });
+  } else if (type === 'INVOICE') {
+    await prisma.reservation.update({ where: { id: reservationId }, data: { status: 'invoiced' } });
+  }
+  await logAction(null, 'invoice.create', { id: created.id, reservationId });
+  res.status(201).json(created);
+});
+app.put('/api/invoices/:id', async (req, res) => {
+  const body = req.body || {};
+  const inv = await prisma.invoice.findUnique({ where: { id: req.params.id } });
+  if (!inv) return res.status(404).json({ error: 'Not found' });
+  const type = body.type || inv.type || 'PROFORMA';
+  const issueDate = body.issueDate ? new Date(body.issueDate) : inv.issueDate;
+  const dueDate = body.dueDate ? new Date(body.dueDate) : inv.dueDate;
+  let items = normalizeItems(body.items ?? inv.items);
+  const { subtotal, vatAmount, total } = calcTotals(items);
+  const number = body.number || inv.number || await generateInvoiceNumber(type, issueDate);
+  const data = {
+    type,
+    number,
+    issueDate,
+    dueDate,
+    currency: body.currency || inv.currency || 'EUR',
+    paymentMethod: body.paymentMethod ?? inv.paymentMethod,
+    paymentTerms: body.paymentTerms ?? inv.paymentTerms,
+    status: body.status || inv.status || 'DRAFT',
+    notes: body.notes ?? inv.notes,
+    supplierName: body.supplierName || inv.supplierName,
+    supplierEik: body.supplierEik || inv.supplierEik,
+    supplierVat: body.supplierVat ?? inv.supplierVat,
+    supplierAddr: body.supplierAddr || inv.supplierAddr,
+    supplierMol: body.supplierMol ?? inv.supplierMol,
+    supplierEmail: body.supplierEmail ?? inv.supplierEmail,
+    supplierPhone: body.supplierPhone ?? inv.supplierPhone,
+    supplierBank: body.supplierBank ?? inv.supplierBank,
+    supplierIban: body.supplierIban ?? inv.supplierIban,
+    supplierBic: body.supplierBic ?? inv.supplierBic,
+    buyerType: body.buyerType ?? inv.buyerType,
+    buyerName: body.buyerName ?? inv.buyerName,
+    buyerEik: body.buyerEik ?? inv.buyerEik,
+    buyerVat: body.buyerVat ?? inv.buyerVat,
+    buyerEgn: body.buyerEgn ?? inv.buyerEgn,
+    buyerMol: body.buyerMol ?? inv.buyerMol,
+    buyerAddr: body.buyerAddr ?? inv.buyerAddr,
+    buyerEmail: body.buyerEmail ?? inv.buyerEmail,
+    buyerBank: body.buyerBank ?? inv.buyerBank,
+    buyerIban: body.buyerIban ?? inv.buyerIban,
+    buyerBic: body.buyerBic ?? inv.buyerBic,
+    items: JSON.stringify(items),
+    subtotal,
+    vatAmount,
+    total
+  };
+  const updated = await prisma.invoice.update({ where: { id: req.params.id }, data });
+  if (data.status === 'PAID') {
+    await prisma.reservation.update({ where: { id: inv.reservationId }, data: { status: 'paid' } });
+  }
+  await logAction(null, 'invoice.update', { id: updated.id, reservationId: inv.reservationId });
+  res.json(updated);
 });
 
 // Dashboard

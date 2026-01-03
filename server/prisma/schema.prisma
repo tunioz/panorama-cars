@@ -59,6 +59,7 @@ model CarParamValue {
 
 model Reservation {
   id         String             @id @default(cuid())
+  seq        Int                @default(0)
   car        Car                @relation(fields: [carId], references: [id], onDelete: Cascade)
   carId      String
   from       DateTime
@@ -73,23 +74,64 @@ model Reservation {
   driverAddress String?
   invoiceType   String?
   invoiceName   String?
-  invoiceNum    String?
+  invoiceNum    String?   // ЕИК или ЕГН
+  invoiceEgn    String?   // ЕГН (ако е физическо лице)
+  invoiceVat    String?   // ДДС № (ако е фирма)
+  invoiceMol    String?   // МОЛ
+  invoiceBank   String?   // Банка
+  invoiceIban   String?   // IBAN
+  invoiceBic    String?   // BIC
   invoiceAddr   String?
   invoiceEmail  String?
   status     String             @default("PENDING")
   total      Float? 
   createdAt  DateTime           @default(now())
-  invoice    Invoice?
+  invoices   Invoice[]
 }
 
 model Invoice {
-  id            String       @id @default(cuid())
-  reservation   Reservation  @relation(fields: [reservationId], references: [id], onDelete: Cascade)
-  reservationId String       @unique
-  number        String       @unique
-  total         Float
-  issuedAt      DateTime     @default(now())
-  paid          Boolean      @default(false)
+  id              String       @id @default(cuid())
+  reservation     Reservation  @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  reservationId   String
+  type            String       // PROFORMA | INVOICE
+  number          String?      @unique
+  issueDate       DateTime     @default(now())
+  dueDate         DateTime?
+  currency        String       @default("EUR")
+  paymentMethod   String?
+  paymentTerms    String?
+  status          String       @default("DRAFT") // DRAFT | ISSUED | PAID | CANCELLED
+  notes           String?
+  // Supplier snapshot (from CompanyInfo at time of issuing)
+  supplierName    String
+  supplierEik     String
+  supplierVat     String?
+  supplierAddr    String
+  supplierMol     String?
+  supplierEmail   String?
+  supplierPhone   String?
+  supplierBank    String?
+  supplierIban    String?
+  supplierBic     String?
+  // Buyer data (from reservation / edited)
+  buyerType       String?      // company | individual
+  buyerName       String?
+  buyerEik        String?
+  buyerVat        String?
+  buyerEgn        String?
+  buyerMol        String?
+  buyerAddr       String?
+  buyerEmail      String?
+  buyerBank       String?
+  buyerIban       String?
+  buyerBic        String?
+  // Lines
+  items           String?      // JSON: [{description, qty, unitPrice, vatRate, totalNet, totalVat, totalGross}]
+  subtotal        Float?
+  vatAmount       Float?
+  total           Float?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 }
 
 model Log {

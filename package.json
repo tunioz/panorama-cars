@@ -1,0 +1,13 @@
+{
+  "name": "car-rental-ui",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static UI + API dev helpers",
+  "type": "module",
+  "scripts": {
+    "dev:frontend": "python3 -m http.server 5174",
+    "dev:api": "node server/src/server.js",
+    "backup:git": "git add -A && git commit -m \"backup: dev snapshot\" && git push"
+  }
+}
+

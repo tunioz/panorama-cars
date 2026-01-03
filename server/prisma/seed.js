@@ -33,7 +33,7 @@ async function main() {
       data: {
         brand,
         model: i % 2 ? "EcoBlue" : "Focus",
-        trim: i % 3 ? "ST-Line 115CV" : "Titanium X",
+        trim: null,
         pricePerHour: 22 + (i % 7) * 2 + (i % 3),
         transmission: i % 2 ? "AUTOMATIC" : "MANUAL",
         fuel: ["DIESEL", "PETROL", "ELECTRIC"][i % 3],

@@ -28,6 +28,17 @@ npm run dev
 # API on http://localhost:5175
 ```
 
+Dev conveniences:
+
+```bash
+# start frontend (5174)
+npm run dev:frontend
+# start api (SQLite on 5175)
+npm run dev:api
+# backup to git with timestamp tag
+npm run backup:git
+```
+
 ## Features
 
 - Search page with dynamic filters
