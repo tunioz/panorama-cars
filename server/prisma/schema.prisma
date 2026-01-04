@@ -83,7 +83,7 @@ model Reservation {
   invoiceBic    String?   // BIC
   invoiceAddr   String?
   invoiceEmail  String?
-  status     String             @default("PENDING")
+  status     String             @default("REQUESTED")
   total      Float? 
   createdAt  DateTime           @default(now())
   invoices   Invoice[]

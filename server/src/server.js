@@ -346,7 +346,8 @@ app.post('/api/reservations', async (req, res) => {
     invoiceBic: data.invoice?.bic || null,
     invoiceAddr: data.invoice?.addr || null,
     invoiceEmail: data.invoice?.email || null,
-    total: data.total || 0
+    total: data.total || 0,
+    status: 'REQUESTED'
   }});
   await logAction(null, 'reservation.create', { id: created.id, seq: nextSeq });
   res.status(201).json(created);

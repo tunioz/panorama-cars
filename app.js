@@ -33,6 +33,14 @@
   const formatMoney = (v) => `$${v.toFixed(2)}`;
   const uid = () => Math.random().toString(36).slice(2, 9);
   const carParamsCache = new Map();
+  const RES_STATUS = [
+    { value: 'REQUESTED', label: 'Заявка' },
+    { value: 'APPROVED', label: 'Одобрена' },
+    { value: 'DECLINED', label: 'Отказана' },
+    { value: 'PAID', label: 'Платена' },
+    { value: 'COMPLETED', label: 'Изпълнена' }
+  ];
+  const statusLabel = (v) => (RES_STATUS.find(s => s.value === v)?.label) || v || '';
   const fmtDate = (v) => {
     if (!v) return '';
     const d = new Date(v);
@@ -1757,10 +1765,10 @@
           <td>${(function(){ const a=new Date(r.from), b=new Date(r.to); const d=Math.max(1, Math.ceil((b-a)/86400000)); return d; })()}</td>
           <td>${r.total ? `€${r.total}` : '—'}</td>
           <td><select class="select" data-status="${r.id}" style="height:32px;">
-              ${['pending','approved','declined','paid','invoiced'].map(s => `<option ${r.status===s?'selected':''}>${s}</option>`).join('')}
+              ${RES_STATUS.map(s => `<option value="${s.value}" ${r.status===s.value?'selected':''}>${s.label}</option>`).join('')}
           </select></td>
           <td class="row" style="gap:6px;">
-            <button class="btn-secondary" data-invoice="${r.id}" style="height:32px;">${r.status==='paid'?'Фактура':'Проформа'}</button>
+            <button class="btn-secondary" data-invoice="${r.id}" style="height:32px;">${r.status==='PAID'?'Фактура':'Проформа'}</button>
           </td>
         </tr>
       `).join('');
@@ -1828,7 +1836,7 @@
               <div><strong>Взимане:</strong> ${r.pickPlace || ''}</div>
               <div><strong>Връщане:</strong> ${r.dropPlace || ''}</div>
               <div><strong>Шофьор:</strong> ${r.driverName||''}, тел: ${r.driverPhone||''}, имейл: ${r.driverEmail||''}</div>
-              <div><strong>Статус:</strong> ${r.status}</div>
+              <div><strong>Статус:</strong> ${statusLabel(r.status)}</div>
               <div><strong>Сума:</strong> ${r.total ? '€'+r.total : '—'}</div>
               <hr>
               <div><strong>${r.status==='paid' ? 'Фактура' : 'Проформа'}</strong> (${r.invoiceType || ''})</div>
@@ -1864,69 +1872,14 @@
     const editMode = params.get('edit') === '1';
     const root = $('#adminRoot');
     root.innerHTML = adminNav('invoices') + `
-      <div class="header"><h2>Инфо за компанията (за фактуриране)</h2></div>
-      <div style="padding:16px;">
-        <form id="companyForm" class="panel" style="padding:16px; display:grid; gap:14px;">
-          <div class="grid-2">
-            <div><div class="section-title">Наименование (фирма)</div><input name="name" class="input" required></div>
-            <div><div class="section-title">МОЛ</div><input name="mol" class="input"></div>
-          </div>
-          <div class="grid-3">
-            <div><div class="section-title">ЕИК/БУЛСТАТ</div><input name="eik" class="input" required></div>
-            <div><div class="section-title">ДДС № (ако има)</div><input name="vat" class="input"></div>
-            <div><div class="section-title">Град</div><input name="city" class="input" required></div>
-          </div>
-          <div><div class="section-title">Адрес на управление</div><input name="address" class="input" required></div>
-          <div class="grid-3">
-            <div><div class="section-title">Държава</div><input name="country" class="input" value="България" required></div>
-            <div><div class="section-title">Телефон</div><input name="phone" class="input"></div>
-            <div><div class="section-title">Имейл</div><input name="email" class="input"></div>
-          </div>
-          <div class="grid-3">
-            <div><div class="section-title">Банка</div><input name="bank" class="input"></div>
-            <div><div class="section-title">IBAN</div><input name="iban" class="input"></div>
-            <div><div class="section-title">BIC</div><input name="bic" class="input"></div>
-          </div>
-          <div class="row" style="justify-content:flex-end; gap:8px;">
-            <button type="submit" class="btn-primary" id="saveCompany">Запази</button>
-          </div>
-          <div id="companyMsg" style="color:#0F8E64; display:none;">Записано успешно.</div>
-        </form>
-      </div>
       <div class="header"><h2>Проформа / Фактура</h2></div>
       ${resId ? `<div id="invEditor" class="panel" style="padding:16px;">Зареждане...</div>` : `<div class="panel" style="padding:16px;">Изберете резервация от списъка с резервации, за да редактирате проформа/фактура.</div>`}
     `;
     let companyCache = null;
-    async function load() {
-      let data = null;
-      try { data = await apiFetch('/api/company'); } catch { data = null; }
-      companyCache = data;
-      const form = $('#companyForm');
-      const set = (n,v) => { const el = form.querySelector(`[name="${n}"]`); if (el) el.value = v || ''; };
-      set('name', data?.name); set('mol', data?.mol);
-      set('eik', data?.eik); set('vat', data?.vat);
-      set('city', data?.city); set('address', data?.address);
-      set('country', data?.country || 'България');
-      set('phone', data?.phone); set('email', data?.email);
-      set('bank', data?.bank); set('iban', data?.iban); set('bic', data?.bic);
+    async function loadCompanyCache() {
+      try { companyCache = await apiFetch('/api/company'); } catch { companyCache = null; }
     }
-    load();
-    $('#companyForm').onsubmit = async (e) => {
-      e.preventDefault();
-      const f = e.currentTarget;
-      const payload = Object.fromEntries(new FormData(f).entries());
-      try {
-        await apiFetch('/api/company', { method: 'PUT', body: JSON.stringify(payload) });
-        $('#companyMsg').style.display = 'block';
-        setTimeout(() => $('#companyMsg').style.display = 'none', 2000);
-      } catch {
-        const msg = $('#companyMsg');
-        msg.style.display = 'block';
-        msg.style.color = '#B42318';
-        msg.textContent = 'Грешка при запис.';
-        setTimeout(() => { msg.style.display = 'none'; msg.style.color = '#0F8E64'; msg.textContent = 'Записано успешно.'; }, 2500);
-      }
-    };
+    loadCompanyCache();
     if (resId) {
       if (editMode) loadInvoiceEditor(resId);
       else loadInvoiceView(resId);
@@ -2342,6 +2295,35 @@
     mountAdminIfNeeded(true);
     const root = $('#adminRoot');
     root.innerHTML = adminNav('settings') + `
+      <div class="header"><h2>Инфо за компанията (фактуриране)</h2></div>
+      <div style="padding:16px;">
+        <form id="companyForm" class="panel" style="padding:16px; display:grid; gap:14px;">
+          <div class="grid-2">
+            <div><div class="section-title">Наименование (фирма)</div><input name="name" class="input" required></div>
+            <div><div class="section-title">МОЛ</div><input name="mol" class="input"></div>
+          </div>
+          <div class="grid-3">
+            <div><div class="section-title">ЕИК/БУЛСТАТ</div><input name="eik" class="input" required></div>
+            <div><div class="section-title">ДДС № (ако има)</div><input name="vat" class="input"></div>
+            <div><div class="section-title">Град</div><input name="city" class="input" required></div>
+          </div>
+          <div><div class="section-title">Адрес на управление</div><input name="address" class="input" required></div>
+          <div class="grid-3">
+            <div><div class="section-title">Държава</div><input name="country" class="input" value="България" required></div>
+            <div><div class="section-title">Телефон</div><input name="phone" class="input"></div>
+            <div><div class="section-title">Имейл</div><input name="email" class="input"></div>
+          </div>
+          <div class="grid-3">
+            <div><div class="section-title">Банка</div><input name="bank" class="input"></div>
+            <div><div class="section-title">IBAN</div><input name="iban" class="input"></div>
+            <div><div class="section-title">BIC</div><input name="bic" class="input"></div>
+          </div>
+          <div class="row" style="justify-content:flex-end; gap:8px;">
+            <button type="submit" class="btn-primary" id="saveCompany">Запази</button>
+          </div>
+          <div id="companyMsg" style="color:#0F8E64; display:none;">Записано успешно.</div>
+        </form>
+      </div>
       <div class="toolbar">
         <button class="btn-primary" id="addLoc">Добави място</button>
         <div style="margin-left:auto;"></div>
@@ -2354,7 +2336,36 @@
         </table>
       </div>
     `;
-    async function load() {
+    async function loadCompany() {
+      let data = null;
+      try { data = await apiFetch('/api/company'); } catch { data = null; }
+      const form = $('#companyForm');
+      const set = (n,v) => { const el = form.querySelector(`[name="${n}"]`); if (el) el.value = v || ''; };
+      set('name', data?.name); set('mol', data?.mol);
+      set('eik', data?.eik); set('vat', data?.vat);
+      set('city', data?.city); set('address', data?.address);
+      set('country', data?.country || 'България');
+      set('phone', data?.phone); set('email', data?.email);
+      set('bank', data?.bank); set('iban', data?.iban); set('bic', data?.bic);
+    }
+    loadCompany();
+    $('#companyForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const f = e.currentTarget;
+      const payload = Object.fromEntries(new FormData(f).entries());
+      try {
+        await apiFetch('/api/company', { method: 'PUT', body: JSON.stringify(payload) });
+        $('#companyMsg').style.display = 'block';
+        setTimeout(() => $('#companyMsg').style.display = 'none', 2000);
+      } catch {
+        const msg = $('#companyMsg');
+        msg.style.display = 'block';
+        msg.style.color = '#B42318';
+        msg.textContent = 'Грешка при запис.';
+        setTimeout(() => { msg.style.display = 'none'; msg.style.color = '#0F8E64'; msg.textContent = 'Записано успешно.'; }, 2500);
+      }
+    };
+    async function loadLocations() {
       let list = [];
       try { list = await apiFetch('/api/locations'); } catch { list = []; }
       $('#locRows').innerHTML = list.map(l => `
@@ -2410,7 +2421,7 @@
         };
       });
     };
-    load();
+    loadLocations();
   }
 
   function renderRoute() {
