@@ -1755,7 +1755,8 @@
       </div>
     `;
     const latestByType = (inv = [], type) => {
-      const filtered = (inv || []).filter(x => x.type === type);
+      const norm = (t) => (t || '').toString().toUpperCase();
+      const filtered = (inv || []).filter(x => norm(x.type) === norm(type));
       if (!filtered.length) return null;
       return filtered.sort((a,b) => new Date(a.issueDate||a.createdAt||0) - new Date(b.issueDate||b.createdAt||0)).pop();
     };
