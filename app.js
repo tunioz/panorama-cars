@@ -1764,12 +1764,13 @@
       const uniq = [];
       const seen = new Set();
       (rs||[]).forEach(r => {
-        if (seen.has(r.id)) return;
-        seen.add(r.id);
+        const key = r.id || `${r.seq || ''}-${r.carId || ''}-${r.from || ''}-${r.to || ''}`;
+        if (seen.has(key)) return;
+        seen.add(key);
         uniq.push(r);
       });
       dataRows = uniq;
-      $('#resRows').innerHTML = rs.map((r, idx) => {
+      $('#resRows').innerHTML = uniq.map((r, idx) => {
         const pro = latestByType(r.invoices, 'PROFORMA');
         const inv = latestByType(r.invoices, 'INVOICE');
         const fmtInvDate = (x) => fmtDate(x?.issueDate || x?.createdAt || x?.updatedAt || '');
