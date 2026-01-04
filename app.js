@@ -1760,6 +1760,10 @@
       if (!filtered.length) return null;
       return filtered.sort((a,b) => new Date(a.issueDate||a.createdAt||0) - new Date(b.issueDate||b.createdAt||0)).pop();
     };
+    const latestAny = (inv = []) => {
+      if (!inv?.length) return null;
+      return [...inv].sort((a,b) => new Date(a.issueDate||a.createdAt||0) - new Date(b.issueDate||b.createdAt||0)).pop();
+    };
     const renderRows = (rs=[]) => {
       const mergeMap = new Map();
       const dayKey = (d) => {
@@ -1780,8 +1784,8 @@
       const merged = Array.from(mergeMap.values());
       dataRows = merged;
       $('#resRows').innerHTML = merged.map((r, idx) => {
-        const pro = latestByType(r.invoices, 'PROFORMA');
-        const inv = latestByType(r.invoices, 'INVOICE');
+        const pro = latestByType(r.invoices, 'PROFORMA') || latestByType(r.invoices, 'PRO');
+        const inv = latestByType(r.invoices, 'INVOICE') || latestAny(r.invoices);
         const fmtInvDate = (x) => fmtDate(x?.issueDate || x?.createdAt || x?.updatedAt || '');
         const fmtInvNum = (x) => x?.number || '(без номер)';
         return `
