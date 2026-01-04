@@ -1749,14 +1749,22 @@
     root.innerHTML = adminNav('reservations') + `
       <div style="padding:16px;">
         <table class="table">
-          <thead><tr><th>№</th><th>Кола</th><th>Клиент</th><th>От</th><th>До</th><th>Дни</th><th>Сума</th><th>Статус</th><th></th></tr></thead>
+          <thead><tr><th>№</th><th>Кола</th><th>Клиент</th><th>От</th><th>До</th><th>Дни</th><th>Сума</th><th>Проформа</th><th>Фактура</th><th>Статус</th><th></th></tr></thead>
           <tbody id="resRows"></tbody>
         </table>
       </div>
     `;
+    const latestByType = (inv = [], type) => {
+      const filtered = (inv || []).filter(x => x.type === type);
+      if (!filtered.length) return null;
+      return filtered.sort((a,b) => new Date(a.issueDate||a.createdAt||0) - new Date(b.issueDate||b.createdAt||0)).pop();
+    };
     const renderRows = (rs=[]) => {
       dataRows = rs;
-      $('#resRows').innerHTML = rs.map((r, idx) => `
+      $('#resRows').innerHTML = rs.map((r, idx) => {
+        const pro = latestByType(r.invoices, 'PROFORMA');
+        const inv = latestByType(r.invoices, 'INVOICE');
+        return `
         <tr data-res="${r.id}">
           <td>${r.seq ?? (idx+1)}</td>
           <td>${(r.car?.brand||'').trim()} ${(r.car?.model||'').trim() || r.carId || ''}</td>
@@ -1764,6 +1772,8 @@
           <td>${fmtDate(r.from)}</td><td>${fmtDate(r.to)}</td>
           <td>${(function(){ const a=new Date(r.from), b=new Date(r.to); const d=Math.max(1, Math.ceil((b-a)/86400000)); return d; })()}</td>
           <td>${r.total ? `€${r.total}` : '—'}</td>
+          <td>${pro ? `${pro.number || ''}<br><span style="color:#556;">${fmtDate(pro.issueDate||pro.createdAt)}</span>` : '—'}</td>
+          <td>${inv ? `${inv.number || ''}<br><span style="color:#556;">${fmtDate(inv.issueDate||inv.createdAt)}</span>` : '—'}</td>
           <td><select class="select" data-status="${r.id}" style="height:32px;">
               ${RES_STATUS.map(s => `<option value="${s.value}" ${r.status===s.value?'selected':''}>${s.label}</option>`).join('')}
           </select></td>
@@ -1771,7 +1781,8 @@
             <button class="btn-secondary" data-invoice="${r.id}" style="height:32px;">${r.status==='PAID'?'Фактура':'Проформа'}</button>
           </td>
         </tr>
-      `).join('');
+      `;
+      }).join('');
       $$('[data-status]').forEach(s => s.onchange = async () => {
         const id = s.getAttribute('data-status');
         const status = s.value;
@@ -1890,8 +1901,19 @@
       host.innerHTML = '<div>Зареждане...</div>';
       let reservation = null;
       let invoice = null;
+      await loadCompanyCache();
       try { reservation = await apiFetch(`/api/reservations/${reservationId}`); } catch {}
       try { const list = await apiFetch(`/api/invoices?reservationId=${reservationId}`); invoice = (list||[])[0] || null; } catch {}
+      // Ако няма фактура/проформа, създаваме проформа автоматично
+      if (!invoice && reservation) {
+        try {
+          invoice = await apiFetch('/api/invoices', { method: 'POST', body: JSON.stringify({ reservationId, type: 'PROFORMA', status: 'ISSUED' }) });
+        } catch {}
+      }
+      // Ако има, но няма номер, генерираме
+      if (invoice && !invoice.number) {
+        try { invoice = await apiFetch(`/api/invoices/${invoice.id}`, { method: 'PUT', body: JSON.stringify({}) }); } catch {}
+      }
       if (!reservation) { host.innerHTML = '<div style="color:#b42318;">Резервацията не е намерена.</div>'; return; }
       const days = (() => { const a=new Date(reservation.from), b=new Date(reservation.to); return Math.max(1, Math.ceil((b-a)/86400000)); })();
       const items = normalizeInvoiceItems(invoice?.items || [
@@ -1952,7 +1974,7 @@
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
           <div>
             <div class="section-title">${payload.type==='INVOICE'?'Фактура':'Проформа'}</div>
-            <div style="color:#556;">Номер: ${payload.number || '(генерира се при запис)'} | Дата: ${payload.issueDate || ''} ${payload.dueDate ? ' | Падеж: '+payload.dueDate : ''} | Валута: ${payload.currency}</div>
+            <div style="color:#556;">Номер: ${payload.number || '(генерира се)'} | Дата: ${payload.issueDate || ''} ${payload.dueDate ? ' | Падеж: '+payload.dueDate : ''} | Валута: ${payload.currency}</div>
             <div style="color:#556;">Основание: Наем на автомобил. Цените са с ДДС 20%.</div>
           </div>
           <div class="row" style="gap:6px;">

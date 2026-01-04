@@ -313,7 +313,7 @@ app.put('/api/cars/:id/params', async (req, res) => {
 app.get('/api/reservations', async (req, res) => {
   const list = await prisma.reservation.findMany({
     orderBy: { createdAt: 'desc' },
-    include: { car: true }
+    include: { car: true, invoices: true }
   });
   res.json(list);
 });
@@ -356,7 +356,7 @@ app.post('/api/reservations', async (req, res) => {
 app.get('/api/reservations/:id', async (req, res) => {
   const reservation = await prisma.reservation.findUnique({
     where: { id: req.params.id },
-    include: { car: true }
+    include: { car: true, invoices: true }
   });
   if (!reservation) return res.status(404).json({ error: 'Not found' });
   res.json(reservation);
