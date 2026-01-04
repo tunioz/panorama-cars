@@ -1760,10 +1760,20 @@
       return filtered.sort((a,b) => new Date(a.issueDate||a.createdAt||0) - new Date(b.issueDate||b.createdAt||0)).pop();
     };
     const renderRows = (rs=[]) => {
-      dataRows = rs;
+      // dedupe by id in case of accidental duplicates
+      const uniq = [];
+      const seen = new Set();
+      (rs||[]).forEach(r => {
+        if (seen.has(r.id)) return;
+        seen.add(r.id);
+        uniq.push(r);
+      });
+      dataRows = uniq;
       $('#resRows').innerHTML = rs.map((r, idx) => {
         const pro = latestByType(r.invoices, 'PROFORMA');
         const inv = latestByType(r.invoices, 'INVOICE');
+        const fmtInvDate = (x) => fmtDate(x?.issueDate || x?.createdAt || x?.updatedAt || '');
+        const fmtInvNum = (x) => x?.number || '(без номер)';
         return `
         <tr data-res="${r.id}">
           <td>${r.seq ?? (idx+1)}</td>
@@ -1772,8 +1782,8 @@
           <td>${fmtDate(r.from)}</td><td>${fmtDate(r.to)}</td>
           <td>${(function(){ const a=new Date(r.from), b=new Date(r.to); const d=Math.max(1, Math.ceil((b-a)/86400000)); return d; })()}</td>
           <td>${r.total ? `€${r.total}` : '—'}</td>
-          <td>${pro ? `${pro.number || ''}<br><span style="color:#556;">${fmtDate(pro.issueDate||pro.createdAt)}</span>` : '—'}</td>
-          <td>${inv ? `${inv.number || ''}<br><span style="color:#556;">${fmtDate(inv.issueDate||inv.createdAt)}</span>` : '—'}</td>
+          <td>${pro ? `${fmtInvNum(pro)}<br><span style="color:#556;">${fmtInvDate(pro)}</span>` : '—'}</td>
+          <td>${inv ? `${fmtInvNum(inv)}<br><span style="color:#556;">${fmtInvDate(inv)}</span>` : '—'}</td>
           <td><select class="select" data-status="${r.id}" style="height:32px;">
               ${RES_STATUS.map(s => `<option value="${s.value}" ${r.status===s.value?'selected':''}>${s.label}</option>`).join('')}
           </select></td>
@@ -1805,7 +1815,14 @@
     };
     const load = async () => {
       try {
-        const rs = await apiFetch('/api/reservations');
+        let rs = await apiFetch('/api/reservations');
+        rs = await Promise.all((rs||[]).map(async (r) => {
+          if (r.invoices && r.invoices.length) return r;
+          try {
+            const invs = await apiFetch(`/api/invoices?reservationId=${r.id}`);
+            return { ...r, invoices: invs || [] };
+          } catch { return { ...r, invoices: [] }; }
+        }));
         renderRows(rs || []);
       } catch {
         const rs = storage.get('cr_reservations', []);
