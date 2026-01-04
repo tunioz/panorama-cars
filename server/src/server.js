@@ -100,17 +100,17 @@ function calcTotals(items) {
 function fmtDateBg(d) {
   try { return new Date(d).toLocaleDateString('bg-BG'); } catch { return ''; }
 }
-async function generateInvoiceNumber(type = 'PROFORMA', issueDate = new Date()) {
+async function generateInvoiceNumber(type = 'PROFORMA', issueDate = new Date(), starts = {}) {
   const year = new Date(issueDate).getFullYear();
   const prefix = `${type === 'INVOICE' ? 'INV' : 'PRO'}-${year}-`;
   const last = await prisma.invoice.findFirst({
     where: { type, number: { startsWith: prefix } },
     orderBy: { number: 'desc' }
   });
-  let next = 1;
+  let next = type === 'INVOICE' ? (starts.invStart || 1) : (starts.proStart || 1);
   if (last?.number) {
-    const m = last.number.match(/-(\\d+)$/);
-    if (m) next = Number(m[1]) + 1;
+    const m = last.number.match(/-(\d+)$/);
+    if (m) next = Math.max(next, Number(m[1]) + 1);
   }
   return `${prefix}${String(next).padStart(5, '0')}`;
 }
@@ -410,7 +410,7 @@ app.post('/api/invoices', async (req, res) => {
     }]);
   }
   const { subtotal, vatAmount, total } = calcTotals(items);
-  const number = body.number || await generateInvoiceNumber(type, issueDate);
+  const number = body.number || await generateInvoiceNumber(type, issueDate, { proStart: company?.proStart, invStart: company?.invStart });
   const data = {
     reservationId,
     type,
@@ -466,7 +466,7 @@ app.put('/api/invoices/:id', async (req, res) => {
   const dueDate = body.dueDate ? new Date(body.dueDate) : inv.dueDate;
   let items = normalizeItems(body.items ?? inv.items);
   const { subtotal, vatAmount, total } = calcTotals(items);
-  const number = body.number || inv.number || await generateInvoiceNumber(type, issueDate);
+  const number = body.number || inv.number || await generateInvoiceNumber(type, issueDate, { proStart: inv.type==='PROFORMA' ? company?.proStart : company?.invStart, invStart: company?.invStart });
   const data = {
     type,
     number,
@@ -555,7 +555,9 @@ app.put('/api/company', async (req, res) => {
     name: body.name, eik: body.eik, vat: body.vat || null,
     address: body.address, city: body.city, country: body.country || 'България',
     mol: body.mol || null, email: body.email || null, phone: body.phone || null,
-    bank: body.bank || null, iban: body.iban || null, bic: body.bic || null
+    bank: body.bank || null, iban: body.iban || null, bic: body.bic || null,
+    proStart: body.proStart ? Number(body.proStart) : 1,
+    invStart: body.invStart ? Number(body.invStart) : 1
   };
   let saved;
   if (exists) saved = await prisma.companyInfo.update({ where: { id: exists.id }, data });

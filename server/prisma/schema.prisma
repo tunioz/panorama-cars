@@ -164,6 +164,8 @@ model CompanyInfo {
   bank      String?
   iban      String?
   bic       String?
+  proStart  Int      @default(1) // стартов номер за проформи
+  invStart  Int      @default(1) // стартов номер за фактури
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

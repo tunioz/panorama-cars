@@ -2318,6 +2318,10 @@
             <div><div class="section-title">IBAN</div><input name="iban" class="input"></div>
             <div><div class="section-title">BIC</div><input name="bic" class="input"></div>
           </div>
+          <div class="grid-2">
+            <div><div class="section-title">Стартов номер проформа</div><input name="proStart" type="number" min="1" class="input" value="1"></div>
+            <div><div class="section-title">Стартов номер фактура</div><input name="invStart" type="number" min="1" class="input" value="1"></div>
+          </div>
           <div class="row" style="justify-content:flex-end; gap:8px;">
             <button type="submit" class="btn-primary" id="saveCompany">Запази</button>
           </div>
@@ -2347,12 +2351,15 @@
       set('country', data?.country || 'България');
       set('phone', data?.phone); set('email', data?.email);
       set('bank', data?.bank); set('iban', data?.iban); set('bic', data?.bic);
+      set('proStart', data?.proStart || 1); set('invStart', data?.invStart || 1);
     }
     loadCompany();
     $('#companyForm').onsubmit = async (e) => {
       e.preventDefault();
       const f = e.currentTarget;
       const payload = Object.fromEntries(new FormData(f).entries());
+      payload.proStart = payload.proStart ? Number(payload.proStart) : 1;
+      payload.invStart = payload.invStart ? Number(payload.invStart) : 1;
       try {
         await apiFetch('/api/company', { method: 'PUT', body: JSON.stringify(payload) });
         $('#companyMsg').style.display = 'block';
