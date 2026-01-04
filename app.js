@@ -1760,17 +1760,25 @@
       return filtered.sort((a,b) => new Date(a.issueDate||a.createdAt||0) - new Date(b.issueDate||b.createdAt||0)).pop();
     };
     const renderRows = (rs=[]) => {
-      // dedupe by id in case of accidental duplicates
-      const uniq = [];
-      const seen = new Set();
+      const mergeMap = new Map();
+      const dayKey = (d) => {
+        if (!d) return '';
+        const dt = new Date(d);
+        if (isNaN(dt)) return '';
+        return `${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`;
+      };
       (rs||[]).forEach(r => {
-        const key = r.id || `${r.seq || ''}-${r.carId || ''}-${r.from || ''}-${r.to || ''}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        uniq.push(r);
+        const key = `${r.seq || ''}-${r.carId || ''}-${dayKey(r.from)}-${dayKey(r.to)}-${(r.driverName||'').trim().toLowerCase()}`;
+        if (!mergeMap.has(key)) {
+          mergeMap.set(key, { ...r, invoices: r.invoices || [] });
+        } else {
+          const cur = mergeMap.get(key);
+          cur.invoices = [...(cur.invoices||[]), ...(r.invoices||[])];
+        }
       });
-      dataRows = uniq;
-      $('#resRows').innerHTML = uniq.map((r, idx) => {
+      const merged = Array.from(mergeMap.values());
+      dataRows = merged;
+      $('#resRows').innerHTML = merged.map((r, idx) => {
         const pro = latestByType(r.invoices, 'PROFORMA');
         const inv = latestByType(r.invoices, 'INVOICE');
         const fmtInvDate = (x) => fmtDate(x?.issueDate || x?.createdAt || x?.updatedAt || '');
