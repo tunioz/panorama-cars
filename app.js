@@ -1405,7 +1405,7 @@
     const rs = storage.get('cr_reservations', []);
     const pending = rs.filter(r => r.status === 'pending');
     root.innerHTML = adminNav('dashboard') + `
-      <div style="padding:16px; display:grid; gap:12px;">
+      <div class="panel" style="padding:16px; display:grid; gap:12px;">
         <div class="grid-3">
           <div class="panel" style="padding:14px;"><div class="section-title">Брой коли</div><h2>${cars.length}</h2></div>
           <div class="panel" style="padding:14px;"><div class="section-title">Брой резервации</div><h2>${rs.length}</h2></div>
@@ -1427,10 +1427,11 @@
     mountAdminIfNeeded(true);
     const root = $('#adminRoot');
     root.innerHTML = adminNav('cars') + `
-      <div class="toolbar">
-        <button class="btn-primary" id="addCar">Добави кола</button>
-      </div>
-      <div style="padding:16px;">
+      <div class="panel" style="padding:16px; display:grid; gap:12px;">
+        <div class="toolbar" style="padding:0; border:0;">
+          <button class="btn-primary" id="addCar">Добави кола</button>
+          <div style="margin-left:auto;"></div>
+        </div>
         <table class="table">
           <thead><tr><th>Марка</th><th>Модел</th><th>Тип</th><th>Цена/ден (€)</th><th>Статус</th><th></th></tr></thead>
           <tbody id="carRows"></tbody>
@@ -1711,13 +1712,13 @@
     mountAdminIfNeeded(true);
     const root = $('#adminRoot');
     root.innerHTML = adminNav('params') + `
-      <div class="toolbar">
-        <button class="btn-primary" id="addParam">Добави параметър</button>
-        <div style="margin-left:auto;display:flex;gap:8px;">
-          <input id="paramSearch" class="input" placeholder="Търсене по име" style="width:220px;">
+      <div class="panel" style="padding:16px; display:grid; gap:12px;">
+        <div class="toolbar" style="padding:0; border:0;">
+          <button class="btn-primary" id="addParam">Добави параметър</button>
+          <div style="margin-left:auto;display:flex;gap:8px;">
+            <input id="paramSearch" class="input" placeholder="Търсене по име" style="width:220px;">
+          </div>
         </div>
-      </div>
-      <div style="padding:16px;">
         <table class="table">
           <thead><tr><th>Име</th><th>Тип</th><th>Опции/Единица</th><th></th></tr></thead>
           <tbody id="paramRows"></tbody>
