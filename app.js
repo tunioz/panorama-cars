@@ -412,7 +412,7 @@
         <a class="navbtn active" href="#/admin" title="Админ">🛠️</a>
         <div class="spacer"></div>
       </nav>
-      <section class="panel" style="grid-column: 1 / -1;" id="adminRoot"></section>
+      <section id="adminRoot" class="admin-shell" style="grid-column: 1 / -1;"></section>
     `;
   }
   function navigate(hash) { if (location.hash !== hash) location.hash = hash; else renderRoute(); }

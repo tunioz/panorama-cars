@@ -69,6 +69,12 @@ h2, .h2 { font-size: var(--font-h2); font-weight: var(--weight-semibold); margin
   gap: var(--gap);
   padding: var(--space-sm);
 }
+.admin-shell {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+  padding: 0 !important;
+}
 
 /* Top navigation */
 .topnav {
