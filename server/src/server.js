@@ -117,6 +117,18 @@ function calcTotals(items) {
 function fmtDateBg(d) {
   try { return new Date(d).toLocaleDateString('bg-BG'); } catch { return ''; }
 }
+async function ensureInvoiceNumber(number, type = 'PROFORMA') {
+  if (!number) return;
+  const prefix = type === 'INVOICE' ? 'INV' : 'PRO';
+  const re = new RegExp(`^${prefix}-\\d{4}-\\d{5}$`);
+  if (!re.test(number)) {
+    throw new Error('Invalid invoice number format');
+  }
+  const exists = await prisma.invoice.findUnique({ where: { number } });
+  if (exists) {
+    throw new Error('Invoice number already exists');
+  }
+}
 async function generateInvoiceNumber(type = 'PROFORMA', issueDate = new Date(), starts = {}) {
   const year = new Date(issueDate).getFullYear();
   const prefix = `${type === 'INVOICE' ? 'INV' : 'PRO'}-${year}-`;
@@ -129,7 +141,61 @@ async function generateInvoiceNumber(type = 'PROFORMA', issueDate = new Date(), 
     const m = last.number.match(/-(\d+)$/);
     if (m) next = Math.max(next, Number(m[1]) + 1);
   }
-  return `${prefix}${String(next).padStart(5, '0')}`;
+  const candidate = `${prefix}${String(next).padStart(5, '0')}`;
+  await ensureInvoiceNumber(candidate, type);
+  return candidate;
+}
+async function createInvoiceForReservation(reservation, type = 'PROFORMA', companyCache) {
+  if (!reservation) return null;
+  const company = companyCache || await prisma.companyInfo.findFirst();
+  const car = reservation.car || (reservation.carId ? await prisma.car.findUnique({ where: { id: reservation.carId } }) : null);
+  const issueDate = new Date();
+  const number = await generateInvoiceNumber(type, issueDate, { proStart: company?.proStart, invStart: company?.invStart });
+  const days = Math.max(1, Math.ceil((new Date(reservation.to) - new Date(reservation.from)) / 86400000));
+  const rate = reservation.ratePerDay || (reservation.total && days ? reservation.total / days : Number(car?.pricePerDay || 0));
+  const items = normalizeItems([{
+    description: `Наем на автомобил ${car?.brand||reservation.car?.brand||''} ${car?.model||reservation.car?.model||''} (${fmtDateBg(reservation.from)} → ${fmtDateBg(reservation.to)})`,
+    qty: days,
+    unitPrice: rate,
+    vatRate: 20
+  }]);
+  const { subtotal, vatAmount, total } = calcTotals(items);
+  await ensureInvoiceNumber(number, type);
+  return await prisma.invoice.create({
+    data: {
+      reservationId: reservation.id,
+      type,
+      number,
+      issueDate,
+      currency: 'EUR',
+      status: 'ISSUED',
+      supplierName: company?.name || '',
+      supplierEik: company?.eik || '',
+      supplierVat: company?.vat || null,
+      supplierAddr: company?.address || '',
+      supplierMol: company?.mol || null,
+      supplierEmail: company?.email || null,
+      supplierPhone: company?.phone || null,
+      supplierBank: company?.bank || null,
+      supplierIban: company?.iban || null,
+      supplierBic: company?.bic || null,
+      buyerType: reservation.invoiceType || 'individual',
+      buyerName: reservation.invoiceName || reservation.driverName || '',
+      buyerEik: reservation.invoiceNum || null,
+      buyerVat: reservation.invoiceVat || null,
+      buyerEgn: reservation.invoiceEgn || null,
+      buyerMol: reservation.invoiceMol || null,
+      buyerAddr: reservation.invoiceAddr || null,
+      buyerEmail: reservation.invoiceEmail || null,
+      buyerBank: reservation.invoiceBank || null,
+      buyerIban: reservation.invoiceIban || null,
+      buyerBic: reservation.invoiceBic || null,
+      items: JSON.stringify(items),
+      subtotal,
+      vatAmount,
+      total
+    }
+  });
 }
 
 // Health
@@ -333,6 +399,19 @@ app.get('/api/reservations', async (req, res) => {
     include: { car: true, invoices: true }
   });
   await normalizeReservationExpiry(list);
+  // auto-issue invoice for paid reservations lacking invoice
+  const company = await prisma.companyInfo.findFirst();
+  for (const r of list) {
+    if ((r.status || '').toUpperCase() === 'PAID') {
+      const hasInvoice = (r.invoices || []).some(inv => (inv.type || '').toUpperCase() === 'INVOICE');
+      if (!hasInvoice) {
+        try {
+          const inv = await createInvoiceForReservation(r, 'INVOICE', company);
+          if (inv) r.invoices = [...(r.invoices||[]), inv];
+        } catch (e) { /* ignore */ }
+      }
+    }
+  }
   res.json(list);
 });
 app.post('/api/reservations', async (req, res) => {
@@ -375,6 +454,58 @@ app.post('/api/reservations', async (req, res) => {
     currency: data.currency || 'EUR',
     status: 'REQUESTED'
   }});
+  // auto-create proforma if има данни за фактура
+  try {
+    const company = await prisma.companyInfo.findFirst();
+    const issueDate = new Date();
+    const number = await generateInvoiceNumber('PROFORMA', issueDate, { proStart: company?.proStart, invStart: company?.invStart });
+    const items = normalizeItems([{
+      description: `Наем на автомобил ${car?.brand||''} ${car?.model||''} (${fmtDateBg(fromDt)} → ${fmtDateBg(toDt)})`,
+      qty: days,
+      unitPrice: rate,
+      vatRate: 20
+    }]);
+    const { subtotal, vatAmount, total: invTotal } = calcTotals(items);
+    await ensureInvoiceNumber(number, 'PROFORMA');
+    await prisma.invoice.create({
+      data: {
+        reservationId: created.id,
+        type: 'PROFORMA',
+        number,
+        issueDate,
+        dueDate: null,
+        currency: 'EUR',
+        status: 'ISSUED',
+        supplierName: company?.name || '',
+        supplierEik: company?.eik || '',
+        supplierVat: company?.vat || null,
+        supplierAddr: company?.address || '',
+        supplierMol: company?.mol || null,
+        supplierEmail: company?.email || null,
+        supplierPhone: company?.phone || null,
+        supplierBank: company?.bank || null,
+        supplierIban: company?.iban || null,
+        supplierBic: company?.bic || null,
+        buyerType: created.invoiceType || 'individual',
+        buyerName: created.invoiceName || created.driverName || '',
+        buyerEik: created.invoiceNum || null,
+        buyerVat: created.invoiceVat || null,
+        buyerEgn: created.invoiceEgn || null,
+        buyerMol: created.invoiceMol || null,
+        buyerAddr: created.invoiceAddr || null,
+        buyerEmail: created.invoiceEmail || null,
+        buyerBank: created.invoiceBank || null,
+        buyerIban: created.invoiceIban || null,
+        buyerBic: created.invoiceBic || null,
+        items: JSON.stringify(items),
+        subtotal,
+        vatAmount,
+        total: invTotal
+      }
+    });
+  } catch (e) {
+    // ignore proforma auto-create errors to not block reservation
+  }
   await logAction(null, 'reservation.create', { id: created.id, seq: nextSeq });
   res.status(201).json(created);
 });
@@ -386,6 +517,16 @@ app.get('/api/reservations/:id', async (req, res) => {
   });
   if (!reservation) return res.status(404).json({ error: 'Not found' });
   await normalizeReservationExpiry([reservation]);
+  if ((reservation.status || '').toUpperCase() === 'PAID') {
+    const hasInvoice = (reservation.invoices || []).some(inv => (inv.type || '').toUpperCase() === 'INVOICE');
+    if (!hasInvoice) {
+      try {
+        const company = await prisma.companyInfo.findFirst();
+        const inv = await createInvoiceForReservation(reservation, 'INVOICE', company);
+        if (inv) reservation.invoices = [...(reservation.invoices||[]), inv];
+      } catch (e) { /* ignore */ }
+    }
+  }
   res.json(reservation);
 });
 app.patch('/api/reservations/:id/status', async (req, res) => {
@@ -393,6 +534,18 @@ app.patch('/api/reservations/:id/status', async (req, res) => {
   const normalized = normalizeStatusValue(status);
   if (!normalized) return res.status(400).json({ error: 'Invalid status' });
   const updated = await prisma.reservation.update({ where: { id: req.params.id }, data: { status: normalized } });
+  // Ако стане PAID -> издаваме фактура (ако няма)
+  if (normalized === 'PAID') {
+    try {
+      const reservation = await prisma.reservation.findUnique({ where: { id: req.params.id }, include: { car: true, invoices: true } });
+      const hasInvoice = (reservation?.invoices || []).some(inv => (inv.type || '').toUpperCase() === 'INVOICE');
+      if (!hasInvoice && reservation) {
+        await createInvoiceForReservation(reservation, 'INVOICE');
+      }
+    } catch (e) {
+      // Do not block status change on invoice creation error
+    }
+  }
   await logAction(null, 'reservation.status', { id: updated.id, status });
   res.json(updated);
 });
@@ -440,6 +593,7 @@ app.post('/api/invoices', async (req, res) => {
   }
   const { subtotal, vatAmount, total } = calcTotals(items);
   const number = body.number || await generateInvoiceNumber(type, issueDate, { proStart: company?.proStart, invStart: company?.invStart });
+  if (body.number) await ensureInvoiceNumber(body.number, type);
   const data = {
     reservationId,
     type,
@@ -490,12 +644,14 @@ app.put('/api/invoices/:id', async (req, res) => {
   const body = req.body || {};
   const inv = await prisma.invoice.findUnique({ where: { id: req.params.id } });
   if (!inv) return res.status(404).json({ error: 'Not found' });
+  const company = await prisma.companyInfo.findFirst();
   const type = body.type || inv.type || 'PROFORMA';
   const issueDate = body.issueDate ? new Date(body.issueDate) : inv.issueDate;
   const dueDate = body.dueDate ? new Date(body.dueDate) : inv.dueDate;
   let items = normalizeItems(body.items ?? inv.items);
   const { subtotal, vatAmount, total } = calcTotals(items);
-  const number = body.number || inv.number || await generateInvoiceNumber(type, issueDate, { proStart: inv.type==='PROFORMA' ? company?.proStart : company?.invStart, invStart: company?.invStart });
+  const number = body.number || inv.number || await generateInvoiceNumber(type, issueDate, { proStart: company?.proStart, invStart: company?.invStart });
+  if (body.number && body.number !== inv.number) await ensureInvoiceNumber(body.number, type);
   const data = {
     type,
     number,
