@@ -68,6 +68,23 @@ function auth(requiredRole) {
 async function logAction(userId, action, meta) {
   try { await prisma.log.create({ data: { userId, action, meta } }); } catch (e) { /* ignore */ }
 }
+const ALLOWED_RES_STATUS = ['REQUESTED','APPROVED','DECLINED','PAID','COMPLETED'];
+function normalizeStatusValue(v) {
+  if (!v) return null;
+  const up = v.toString().toUpperCase();
+  return ALLOWED_RES_STATUS.includes(up) ? up : null;
+}
+async function normalizeReservationExpiry(resList) {
+  const now = new Date();
+  for (const r of resList) {
+    const st = normalizeStatusValue(r.status);
+    const toDate = new Date(r.to);
+    if (st !== 'DECLINED' && st !== 'COMPLETED' && toDate < now) {
+      await prisma.reservation.update({ where: { id: r.id }, data: { status: 'COMPLETED' } });
+      r.status = 'COMPLETED';
+    }
+  }
+}
 function normalizeItems(items) {
   if (typeof items === 'string') {
     try { items = JSON.parse(items); } catch { items = []; }
@@ -315,16 +332,7 @@ app.get('/api/reservations', async (req, res) => {
     orderBy: { createdAt: 'desc' },
     include: { car: true, invoices: true }
   });
-  const now = new Date();
-  // auto-complete past reservations that are not declined
-  for (const r of list) {
-    const st = (r.status || '').toUpperCase();
-    const toDate = new Date(r.to);
-    if (st !== 'DECLINED' && st !== 'COMPLETED' && toDate < now) {
-      await prisma.reservation.update({ where: { id: r.id }, data: { status: 'COMPLETED' } });
-      r.status = 'COMPLETED';
-    }
-  }
+  await normalizeReservationExpiry(list);
   res.json(list);
 });
 app.post('/api/reservations', async (req, res) => {
@@ -369,11 +377,14 @@ app.get('/api/reservations/:id', async (req, res) => {
     include: { car: true, invoices: true }
   });
   if (!reservation) return res.status(404).json({ error: 'Not found' });
+  await normalizeReservationExpiry([reservation]);
   res.json(reservation);
 });
 app.patch('/api/reservations/:id/status', async (req, res) => {
   const { status } = req.body;
-  const updated = await prisma.reservation.update({ where: { id: req.params.id }, data: { status } });
+  const normalized = normalizeStatusValue(status);
+  if (!normalized) return res.status(400).json({ error: 'Invalid status' });
+  const updated = await prisma.reservation.update({ where: { id: req.params.id }, data: { status: normalized } });
   await logAction(null, 'reservation.status', { id: updated.id, status });
   res.json(updated);
 });
