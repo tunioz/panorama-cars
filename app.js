@@ -1993,13 +1993,14 @@
         const list = await apiFetch('/api/invoices');
         $('#invList').innerHTML = (list||[]).map(inv => {
           const dt = inv.issueDate ? fmtDate(inv.issueDate) : '';
-          const type = inv.type === 'INVOICE' ? 'Фактура' : 'Проформа';
+          const t = (inv.type || '').toString().toUpperCase();
+          const typeLabel = t === 'INVOICE' ? 'Фактура' : 'Проформа';
           return `<tr>
             <td>${inv.number || '—'}</td>
-            <td>${type}</td>
+            <td>${typeLabel}</td>
             <td>${dt}</td>
             <td>${inv.reservationId || ''}</td>
-            <td>${inv.status || ''}</td>
+            <td>${(inv.status || '').toString().toUpperCase() || ''}</td>
             <td><button class="btn-secondary" data-open="${inv.reservationId}" style="height:32px;">Отвори</button></td>
           </tr>`;
         }).join('') || '<tr><td colspan="6">Няма фактури.</td></tr>';
