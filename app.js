@@ -418,6 +418,21 @@
   function navigate(hash) { if (location.hash !== hash) location.hash = hash; else renderRoute(); }
   window.addEventListener('hashchange', renderRoute);
 
+  const defaultRange = () => {
+    const pad = (n) => String(n).padStart(2, '0');
+    const snapMinutes = (d) => {
+      const m = d.getMinutes();
+      d.setMinutes(m < 30 ? 0 : 30, 0, 0);
+      return d;
+    };
+    const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const start = snapMinutes(new Date());
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    return { from: fmt(start), to: fmt(end) };
+  };
+  const initialRange = defaultRange();
+
   // Filters
   const filterState = {
     query: '',
@@ -427,8 +442,8 @@
     sort: 'Closest to me',
     pick: '',
     drop: '',
-    from: '',
-    to: '',
+    from: initialRange.from,
+    to: initialRange.to,
     type: 'Всички'
   };
 
@@ -1085,44 +1100,25 @@
       `;
     };
 
-    const allPrefilled = (draft.pick || draft.drop || draft.from || draft.to) ? true : false;
-
-    const block1 = `
-      <section id="step1" style="margin-bottom:12px;">
-        <div id="paramsBlock" style="padding:16px; display:${allPrefilled?'none':'grid'}; gap:14px;">
-          <div class="grid-2">
-            <div><div class="section-title">Място взимане</div><input id="wPick" class="input" value="${draft.pick || ''}" placeholder="Място"/></div>
-            <div><div class="section-title">Място връщане</div><input id="wDrop" class="input" value="${draft.drop || ''}" placeholder="Място"/></div>
-          </div>
-          <div class="grid-2">
-            <div><div class="section-title">От</div><input id="wFrom" type="datetime-local" step="1800" class="input" value="${(draft.from || '').slice(0,16)}"/></div>
-            <div><div class="section-title">До</div><input id="wTo" type="datetime-local" step="1800" class="input" value="${(draft.to || '').slice(0,16)}"/></div>
-          </div>
-          <div class="row" style="justify-content:flex-end; gap:8px;">
-            <button class="btn-primary" id="next1">Напред</button>
-          </div>
+    const blockDates = `
+      <section id="step1" class="panel" style="margin-bottom:12px; padding:16px; display:grid; gap:14px;">
+        <div class="header" style="border:0; padding:0; margin-bottom:8px;"><h2>Дати и локации</h2></div>
+        <div class="grid-2">
+          <div><div class="section-title">Място взимане</div><input id="wPick" class="input" value="${draft.pick || ''}" placeholder="Място"/></div>
+          <div><div class="section-title">Място връщане</div><input id="wDrop" class="input" value="${draft.drop || ''}" placeholder="Място"/></div>
         </div>
-        <div id="paramsSummary" style="padding:16px; display:${allPrefilled ? 'block' : 'none'};">
-          <div class="row" style="justify-content:space-between; align-items:center;">
-            <div>
-              <div class="meta" style="gap:6px;flex-wrap:wrap;">
-                ${draft.pick ? `<span class="pill">Взимане: ${draft.pick}</span>` : ''}
-                ${draft.drop ? `<span class="pill">Връщане: ${draft.drop}</span>` : ''}
-                ${draft.from ? `<span class="pill">От: ${(draft.from||'').replace('T',' ')}</span>` : ''}
-                ${draft.to ? `<span class="pill">До: ${(draft.to||'').replace('T',' ')}</span>` : ''}
-              </div>
-            </div>
-            <button class="btn-secondary" id="changeParams" style="height:32px;">Промени</button>
-          </div>
-          <div class="row" style="justify-content:flex-end; margin-top:12px;">
-            <button class="btn-primary" id="next1b">Напред</button>
-          </div>
+        <div class="grid-2">
+          <div><div class="section-title">От</div><input id="wFrom" type="datetime-local" step="1800" class="input" value="${(draft.from || '').slice(0,16)}"/></div>
+          <div><div class="section-title">До</div><input id="wTo" type="datetime-local" step="1800" class="input" value="${(draft.to || '').slice(0,16)}"/></div>
+        </div>
+        <div class="row" style="justify-content:flex-end; gap:8px;">
+          <button class="btn-primary" id="next1">Напред</button>
         </div>
       </section>
     `;
 
     const block2 = `
-      <section id="step2" style="margin-bottom:12px;">
+      <section id="step2" class="panel" style="margin-bottom:12px; padding:0;">
         <div class="header"><h2>Данни на шофьора</h2></div>
         <div style="padding:16px; display:grid; gap:14px;">
           <div class="grid-3">
@@ -1141,7 +1137,7 @@
 
     const inv = draft.invoice || { type: 'individual' };
     const block3 = `
-      <section id="step3" style="margin-bottom:12px;">
+      <section id="step3" class="panel" style="margin-bottom:12px; padding:0;">
         <div class="header"><h2>Данни за фактура</h2></div>
         <div style="padding:16px; display:grid; gap:14px;">
           <div class="radios">
@@ -1180,14 +1176,14 @@
           </div>
           <div class="row" style="justify-content:space-between;">
             <button class="btn-secondary" id="back2">Назад</button>
-            <button class="btn-primary" id="confirm">Потвърждение</button>
+            <button class="btn-primary" id="confirm">Резервирай</button>
           </div>
         </div>
       </section>
     `;
 
     const block4 = `
-      <section id="step4" style="margin-bottom:12px;">
+      <section id="step4" class="panel" style="margin-bottom:12px; padding:0;">
         <div class="header"><h2>Резервация изпратена</h2></div>
         <div style="padding:16px;">
           <p>Вашата заявка № <strong>${paramsUrl.get('id') || draft.id}</strong> е получена и очаква одобрение.</p>
@@ -1203,7 +1199,7 @@
       <div class="header"><h2>Резервация</h2></div>
       ${stepper}
       ${renderCarBadge(car)}
-      ${step>=1 ? block1 : ''}
+      ${blockDates}
       ${step>=2 ? block2 : ''}
       ${step>=3 ? block3 : ''}
       ${step>=4 ? block4 : ''}

@@ -315,6 +315,16 @@ app.get('/api/reservations', async (req, res) => {
     orderBy: { createdAt: 'desc' },
     include: { car: true, invoices: true }
   });
+  const now = new Date();
+  // auto-complete past reservations that are not declined
+  for (const r of list) {
+    const st = (r.status || '').toUpperCase();
+    const toDate = new Date(r.to);
+    if (st !== 'DECLINED' && st !== 'COMPLETED' && toDate < now) {
+      await prisma.reservation.update({ where: { id: r.id }, data: { status: 'COMPLETED' } });
+      r.status = 'COMPLETED';
+    }
+  }
   res.json(list);
 });
 app.post('/api/reservations', async (req, res) => {
