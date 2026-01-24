@@ -84,7 +84,9 @@ model Reservation {
   invoiceAddr   String?
   invoiceEmail  String?
   status     String             @default("REQUESTED")
-  total      Float? 
+  total      Float?
+  ratePerDay Float?
+  currency   String   @default("EUR")
   createdAt  DateTime           @default(now())
   invoices   Invoice[]
 }

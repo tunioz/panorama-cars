@@ -340,11 +340,17 @@ app.post('/api/reservations', async (req, res) => {
   // simple seq: max+1
   const maxSeq = await prisma.reservation.aggregate({ _max: { seq: true } });
   const nextSeq = (maxSeq._max.seq || 0) + 1;
+  const car = await prisma.car.findUnique({ where: { id: data.carId } });
+  const rate = Number(car?.pricePerDay || 0);
+  const fromDt = new Date(data.from);
+  const toDt = new Date(data.to);
+  const days = Math.max(1, Math.ceil((toDt - fromDt) / 86400000));
+  const total = rate * days;
   const created = await prisma.reservation.create({ data: {
     seq: nextSeq,
     carId: data.carId,
-    from: new Date(data.from),
-    to: new Date(data.to),
+    from: fromDt,
+    to: toDt,
     pickPlace: data.pickPlace || null,
     dropPlace: data.dropPlace || null,
     driverName: data.driver?.name || null,
@@ -364,7 +370,9 @@ app.post('/api/reservations', async (req, res) => {
     invoiceBic: data.invoice?.bic || null,
     invoiceAddr: data.invoice?.addr || null,
     invoiceEmail: data.invoice?.email || null,
-    total: data.total || 0,
+    total,
+    ratePerDay: rate,
+    currency: data.currency || 'EUR',
     status: 'REQUESTED'
   }});
   await logAction(null, 'reservation.create', { id: created.id, seq: nextSeq });

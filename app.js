@@ -662,7 +662,7 @@
                   return s.includes('серв') || s === 'service';
                 };
                 const overlaps = (() => {
-                  const rel = (reservations || []).filter(r => r.carId === c.id && !['declined'].includes(r.status));
+                  const rel = (reservations || []).filter(r => r.carId === c.id && !(r.status && r.status.toUpperCase() === 'DECLINED'));
                   if (!selFrom || !selTo) return rel;
                   return rel.filter(r => isOverlap(selFrom, selTo, r.from, r.to));
                 })();
@@ -819,7 +819,13 @@
         return;
       }
       const params = await loadCarParams(id).catch(() => []);
-      const relRes = (reservations || []).filter(r => r.carId === id && !['declined'].includes(r.status));
+      const now = new Date();
+      const relRes = (reservations || []).filter(r => {
+        const st = (r.status || '').toLowerCase();
+        if (st === 'declined') return false;
+        const to = new Date(r.to);
+        return to >= now && r.carId === id;
+      });
       const selFrom = filterState.from;
       const selTo = filterState.to;
       const isService = () => {
@@ -1031,8 +1037,10 @@
     mountSearchLayout(); // reuse container but full-width details
     $('#filters').style.display = 'none';
     $('#results').style.display = 'none';
-    $('#details').style.gridColumn = '1 / -1';
     const d = $('#details');
+    d.style.gridColumn = '1 / -1';
+    d.classList.remove('panel');
+    Object.assign(d.style, { border: 'none', boxShadow: 'none', background: 'transparent', padding: '0' });
     const paramsUrl = new URLSearchParams(location.hash.split('?')[1] || '');
     const step = Number(paramsUrl.get('step') || '1');
     const car = cars.find(c => c.id === paramsUrl.get('car')) || cars[0];
@@ -1195,6 +1203,24 @@
       </section>
     `;
 
+    const clearErrors = () => {
+      $$('.err-msg', d).forEach(n => n.remove());
+      $$('.error', d).forEach(n => n.classList.remove('error'));
+    };
+    const setError = (inputEl, msg) => {
+      if (!inputEl) return;
+      inputEl.classList.add('error');
+      const holder = inputEl.parentElement || inputEl;
+      const m = document.createElement('span');
+      m.className = 'err-msg';
+      m.textContent = msg;
+      holder.appendChild(m);
+    };
+    const scrollToError = () => {
+      const first = $('.error', d);
+      if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+
     d.innerHTML = `
       <div class="header"><h2>Резервация</h2></div>
       ${stepper}
@@ -1207,6 +1233,16 @@
 
     // Стъпка 1
     if (step >= 1) {
+      const validateStep1 = () => {
+        clearErrors();
+        let ok = true;
+        if (!$('#wPick').value.trim()) { setError($('#wPick'), 'Въведете място за взимане'); ok = false; }
+        if (!$('#wDrop').value.trim()) { setError($('#wDrop'), 'Въведете място за връщане'); ok = false; }
+        if (!$('#wFrom').value) { setError($('#wFrom'), 'Изберете дата и час'); ok = false; }
+        if (!$('#wTo').value) { setError($('#wTo'), 'Изберете дата и час'); ok = false; }
+        if (!ok) scrollToError();
+        return ok;
+      };
       $('#wPick').value = draft.pick || '';
       $('#wDrop').value = draft.drop || '';
       $('#wFrom').value = (draft.from || '').slice(0,16);
@@ -1233,22 +1269,29 @@
         attachTypeahead($('#wPick'), labels);
         attachTypeahead($('#wDrop'), labels);
       }).catch(()=>{});
-      $('#changeParams')?.addEventListener('click', () => {
-        $('#paramsSummary').style.display = 'none';
-        $('#paramsBlock').style.display = 'grid';
-      });
       $('#next1')?.addEventListener('click', () => {
+        if (!validateStep1()) return;
         draft.pick = $('#wPick').value; draft.drop = $('#wDrop').value;
         draft.from = $('#wFrom').value; draft.to = $('#wTo').value;
         gotoStep(2);
       });
-      $('#next1b')?.addEventListener('click', () => gotoStep(2));
     }
 
     // Стъпка 2
     if (step >= 2) {
+      const validateStep2 = () => {
+        clearErrors();
+        let ok = true;
+        if (!$('#dName').value.trim()) { setError($('#dName'), 'Име е задължително'); ok = false; }
+        if (!$('#dPhone').value.trim()) { setError($('#dPhone'), 'Телефон е задължителен'); ok = false; }
+        if (!$('#dEmail').value.trim()) { setError($('#dEmail'), 'Имейл е задължителен'); ok = false; }
+        if (!$('#dLicense').value.trim()) { setError($('#dLicense'), 'Номер на книжка е задължителен'); ok = false; }
+        if (!ok) scrollToError();
+        return ok;
+      };
       $('#back1')?.addEventListener('click', () => gotoStep(1));
       $('#next2')?.addEventListener('click', () => {
+        if (!validateStep2()) return;
         draft.driver = {
           name: $('#dName').value, phone: $('#dPhone').value, email: $('#dEmail').value,
           license: $('#dLicense').value, birth: '', addr: ''
@@ -1259,6 +1302,24 @@
 
     // Стъпка 3
     if (step >= 3) {
+      const validateStep3 = () => {
+        clearErrors();
+        let ok = true;
+        const type = invState.type === 'company' ? 'company' : 'individual';
+        if (type === 'individual') {
+          if (!$('#iNameInd').value.trim()) { setError($('#iNameInd'), 'Име е задължително'); ok = false; }
+          if (!$('#iEgn').value.trim()) { setError($('#iEgn'), 'ЕГН е задължително'); ok = false; }
+          if (!$('#iAddrInd').value.trim()) { setError($('#iAddrInd'), 'Адрес е задължителен'); ok = false; }
+          if (!$('#iEmailInd').value.trim()) { setError($('#iEmailInd'), 'Имейл е задължителен'); ok = false; }
+        } else {
+          if (!$('#iNameCo').value.trim()) { setError($('#iNameCo'), 'Име на фирма е задължително'); ok = false; }
+          if (!$('#iNumCo').value.trim()) { setError($('#iNumCo'), 'ЕИК е задължителен'); ok = false; }
+          if (!$('#iAddrCo').value.trim()) { setError($('#iAddrCo'), 'Адрес е задължителен'); ok = false; }
+          if (!$('#iEmailCo').value.trim()) { setError($('#iEmailCo'), 'Имейл е задължителен'); ok = false; }
+        }
+        if (!ok) scrollToError();
+        return ok;
+      };
       const invState = draft.invoice || { type: 'individual' };
       $$('input[name="invType"]').forEach(r => r.onchange = () => {
         invState.type = r.value;
@@ -1267,6 +1328,7 @@
       });
       $('#back2')?.addEventListener('click', () => gotoStep(2));
       $('#confirm')?.addEventListener('click', async () => {
+        if (!validateStep3()) return;
         if (invState.type === 'company') {
           draft.invoice = {
             type: 'company',
@@ -1324,17 +1386,16 @@
     return `
       <div class="header">
         <h2>Административен панел</h2>
-        <div class="row" style="gap:8px;">
-          <a class="btn-secondary" href="#/">Начало</a>
-        </div>
       </div>
-      <div class="toolbar">
-        <a class="tag ${active==='dashboard'?'':'pill'}" href="#/admin">Дашборд</a>
-        <a class="tag ${active==='cars'?'':'pill'}" href="#/admin/cars">Коли</a>
-        <a class="tag ${active==='params'?'':'pill'}" href="#/admin/params">Параметри</a>
-        <a class="tag ${active==='settings'?'':'pill'}" href="#/admin/settings">Настройки</a>
-        <a class="tag ${active==='reservations'?'':'pill'}" href="#/admin/reservations">Резервации</a>
-        <a class="tag ${active==='invoices'?'':'pill'}" href="#/admin/invoices">Фактури</a>
+      <div class="panel" style="padding:12px; margin:12px 0;">
+        <div class="toolbar" style="border:0; padding:0;">
+          <a class="tag ${active==='dashboard'?'':'pill'}" href="#/admin">Дашборд</a>
+          <a class="tag ${active==='cars'?'':'pill'}" href="#/admin/cars">Коли</a>
+          <a class="tag ${active==='params'?'':'pill'}" href="#/admin/params">Параметри</a>
+          <a class="tag ${active==='settings'?'':'pill'}" href="#/admin/settings">Настройки</a>
+          <a class="tag ${active==='reservations'?'':'pill'}" href="#/admin/reservations">Резервации</a>
+          <a class="tag ${active==='invoices'?'':'pill'}" href="#/admin/invoices">Фактури</a>
+        </div>
       </div>
     `;
   }
@@ -1467,7 +1528,7 @@
         const defs = await loadParamDefsWithValues();
         root.innerHTML = adminNav('cars') + `
           <div class="header"><h2>${isNew?'Добавяне':'Редакция'} на кола</h2></div>
-          <div style="padding:16px; display:grid; gap:12px;">
+          <div class="panel" style="padding:16px; display:grid; gap:12px;">
             <div class="grid-3">
               <input id="cBrand" class="input" placeholder="Марка" value="${car.brand}">
               <input id="cModel" class="input" placeholder="Модел" value="${car.model}">
@@ -1491,7 +1552,7 @@
               <div id="paramGrid" class="grid-3"></div>
             </div>
             <div class="row" style="justify-content:space-between;">
-              <a class="btn-secondary" href="#/admin/cars">Отказ</a>
+              <a class="btn-secondary" href="#/admin/cars" style="text-decoration:none; display:grid; place-items:center; height:44px;">Отказ</a>
               <button class="btn-primary" id="saveCar">Запази</button>
             </div>
           </div>
@@ -1681,9 +1742,9 @@
             <div><div class="section-title">Име</div><input id="pName" class="input" value="${param?.name || ''}"></div>
             <div><div class="section-title">Тип</div>
               <select id="pType" class="select">
-                <option value="ENUM" ${param?.type==='ENUM'?'selected':''}>enum</option>
-                <option value="NUMBER" ${param?.type==='NUMBER'?'selected':''}>number</option>
-                <option value="TEXT" ${param?.type==='TEXT'?'selected':''}>text</option>
+                <option value="ENUM" ${param?.type==='ENUM'?'selected':''}>опции</option>
+                <option value="NUMBER" ${param?.type==='NUMBER'?'selected':''}>число</option>
+                <option value="TEXT" ${param?.type==='TEXT'?'selected':''}>текст</option>
               </select>
             </div>
           </div>
@@ -1723,7 +1784,7 @@
       $('#paramRows').innerHTML = list.map(p => `
         <tr>
           <td>${p.name}</td>
-          <td>${p.type}</td>
+          <td>${p.type==='ENUM'?'опции':p.type}</td>
           <td>${p.type==='ENUM' ? (Array.isArray(p.options)?p.options.join(', '):(p.options||[]).join(', ')) : (p.unit || '')}</td>
           <td><button class="btn-secondary" data-edit="${p.id}" style="height:32px;">Редакция</button></td>
         </tr>
@@ -1785,7 +1846,7 @@
         const fmtInvDate = (x) => fmtDate(x?.issueDate || x?.createdAt || x?.updatedAt || '');
         const fmtInvNum = (x) => x?.number || '(без номер)';
         return `
-        <tr data-res="${r.id}">
+        <tr data-res="${r.id}" class="row-status-${r.status}">
           <td>${r.seq ?? (idx+1)}</td>
           <td>${(r.car?.brand||'').trim()} ${(r.car?.model||'').trim() || r.carId || ''}</td>
           <td>${r.driverName||r.driver?.name||''}</td>
@@ -1910,6 +1971,13 @@
     const editMode = params.get('edit') === '1';
     const root = $('#adminRoot');
     root.innerHTML = adminNav('invoices') + `
+      <div class="panel" style="padding:16px; margin-bottom:12px;">
+        <div class="header" style="padding:0 0 12px 0; border:0;"><h2>Списък фактури/проформи</h2></div>
+        <table class="table">
+          <thead><tr><th>Номер</th><th>Тип</th><th>Дата</th><th>Резервация</th><th>Статус</th><th></th></tr></thead>
+          <tbody id="invList"></tbody>
+        </table>
+      </div>
       <div class="header"><h2>Проформа / Фактура</h2></div>
       ${resId ? `<div id="invEditor" class="panel" style="padding:16px;">Зареждане...</div>` : `<div class="panel" style="padding:16px;">Изберете резервация от списъка с резервации, за да редактирате проформа/фактура.</div>`}
     `;
@@ -1918,6 +1986,30 @@
       try { companyCache = await apiFetch('/api/company'); } catch { companyCache = null; }
     }
     loadCompanyCache();
+    // списък с фактури
+    (async () => {
+      try {
+        const list = await apiFetch('/api/invoices');
+        $('#invList').innerHTML = (list||[]).map(inv => {
+          const dt = inv.issueDate ? fmtDate(inv.issueDate) : '';
+          const type = inv.type === 'INVOICE' ? 'Фактура' : 'Проформа';
+          return `<tr>
+            <td>${inv.number || '—'}</td>
+            <td>${type}</td>
+            <td>${dt}</td>
+            <td>${inv.reservationId || ''}</td>
+            <td>${inv.status || ''}</td>
+            <td><button class="btn-secondary" data-open="${inv.reservationId}" style="height:32px;">Отвори</button></td>
+          </tr>`;
+        }).join('') || '<tr><td colspan="6">Няма фактури.</td></tr>';
+        $$('[data-open]').forEach(b => b.onclick = () => {
+          const rid = b.getAttribute('data-open');
+          if (rid) navigate(`#/admin/invoices?id=${rid}`);
+        });
+      } catch {
+        $('#invList').innerHTML = '<tr><td colspan="6">Неуспешно зареждане на фактурите.</td></tr>';
+      }
+    })();
     if (resId) {
       if (editMode) loadInvoiceEditor(resId);
       else loadInvoiceView(resId);
@@ -2344,9 +2436,9 @@
     mountAdminIfNeeded(true);
     const root = $('#adminRoot');
     root.innerHTML = adminNav('settings') + `
-      <div class="header"><h2>Инфо за компанията (фактуриране)</h2></div>
-      <div style="padding:16px;">
-        <form id="companyForm" class="panel" style="padding:16px; display:grid; gap:14px;">
+      <div class="panel" style="padding:16px; margin-bottom:12px;">
+        <div class="header" style="padding:0 0 12px 0; border:0;"><h2>Инфо за компанията (фактуриране)</h2></div>
+        <form id="companyForm" style="display:grid; gap:14px;">
           <div class="grid-2">
             <div><div class="section-title">Наименование (фирма)</div><input name="name" class="input" required></div>
             <div><div class="section-title">МОЛ</div><input name="mol" class="input"></div>
@@ -2377,12 +2469,12 @@
           <div id="companyMsg" style="color:#0F8E64; display:none;">Записано успешно.</div>
         </form>
       </div>
-      <div class="toolbar">
-        <button class="btn-primary" id="addLoc">Добави място</button>
-        <div style="margin-left:auto;"></div>
-      </div>
-      <div style="padding:16px;">
-        <div class="section-title">Места за взимане/връщане</div>
+      <div class="panel" style="padding:16px; display:grid; gap:12px;">
+        <div class="toolbar" style="padding:0; border:0;">
+          <div class="section-title">Места за взимане/връщане</div>
+          <button class="btn-primary" id="addLoc">Добави място</button>
+          <div style="margin-left:auto;"></div>
+        </div>
         <table class="table">
           <thead><tr><th>Име</th><th>Активно</th><th></th></tr></thead>
           <tbody id="locRows"></tbody>
