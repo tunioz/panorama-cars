@@ -1994,7 +1994,7 @@
         $('#invList').innerHTML = (list||[]).map(inv => {
           const dt = inv.issueDate ? fmtDate(inv.issueDate) : '';
           const t = (inv.type || '').toString().toUpperCase();
-          const typeLabel = t === 'INVOICE' ? 'Фактура' : 'Проформа';
+          const typeLabel = t.includes('INV') ? 'Фактура' : 'Проформа';
           return `<tr>
             <td>${inv.number || '—'}</td>
             <td>${typeLabel}</td>
