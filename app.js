@@ -1805,7 +1805,7 @@
     const root = $('#adminRoot');
     let dataRows = [];
     root.innerHTML = adminNav('reservations') + `
-      <div style="padding:16px;">
+      <div class="panel" style="padding:16px;">
         <table class="table">
           <thead><tr><th>№</th><th>Кола</th><th>Клиент</th><th>От</th><th>До</th><th>Дни</th><th>Сума</th><th>Проформа</th><th>Фактура</th><th>Статус</th><th></th></tr></thead>
           <tbody id="resRows"></tbody>
