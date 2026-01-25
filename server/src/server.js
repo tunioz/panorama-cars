@@ -119,31 +119,53 @@ function fmtDateBg(d) {
 }
 async function ensureInvoiceNumber(number, type = 'PROFORMA') {
   if (!number) return;
-  const prefix = type === 'INVOICE' ? 'INV' : 'PRO';
-  const re = new RegExp(`^${prefix}-\\d{4}-\\d{5}$`);
-  if (!re.test(number)) {
-    throw new Error('Invalid invoice number format');
-  }
+  const re = type === 'INVOICE'
+    ? /^\d{10}$/ // 10 дигити за фактура
+    : /^(PF-\d{4,}|\d{4,})$/; // по-гъвкаво за проформа
+  if (!re.test(number)) throw new Error('Invalid invoice number format');
   const exists = await prisma.invoice.findUnique({ where: { number } });
   if (exists) {
     throw new Error('Invoice number already exists');
   }
 }
 async function generateInvoiceNumber(type = 'PROFORMA', issueDate = new Date(), starts = {}) {
-  const year = new Date(issueDate).getFullYear();
-  const prefix = `${type === 'INVOICE' ? 'INV' : 'PRO'}-${year}-`;
-  const last = await prisma.invoice.findFirst({
-    where: { type, number: { startsWith: prefix } },
-    orderBy: { number: 'desc' }
-  });
-  let next = type === 'INVOICE' ? (starts.invStart || 1) : (starts.proStart || 1);
-  if (last?.number) {
-    const m = last.number.match(/-(\d+)$/);
-    if (m) next = Math.max(next, Number(m[1]) + 1);
+  if (type === 'INVOICE') {
+    const invStart = starts.invStart || 1;
+    const list = await prisma.invoice.findMany({ where: { type: 'INVOICE' }, select: { number: true } });
+    let maxNum = invStart - 1;
+    list.forEach(n => {
+      const m = n.number?.match(/^(\d{10})$/);
+      if (m) maxNum = Math.max(maxNum, Number(m[1]));
+    });
+    const next = maxNum + 1;
+    const candidate = String(next).padStart(10, '0');
+    await ensureInvoiceNumber(candidate, 'INVOICE');
+    return candidate;
+  } else {
+    const proStart = starts.proStart || 1;
+    const list = await prisma.invoice.findMany({ where: { type: 'PROFORMA' }, select: { number: true } });
+    let maxNum = proStart - 1;
+    list.forEach(n => {
+      const m = n.number?.match(/(?:PF-)?(\d{4,})$/);
+      if (m) maxNum = Math.max(maxNum, Number(m[1]));
+    });
+    const candidate = `PF-${String(maxNum + 1).padStart(4, '0')}`;
+    await ensureInvoiceNumber(candidate, 'PROFORMA');
+    return candidate;
   }
-  const candidate = `${prefix}${String(next).padStart(5, '0')}`;
-  await ensureInvoiceNumber(candidate, type);
-  return candidate;
+}
+async function ensureInvoicesForPaidReservations(companyCache) {
+  const company = companyCache || await prisma.companyInfo.findFirst();
+  const paid = await prisma.reservation.findMany({
+    where: {
+      status: 'PAID',
+      invoices: { none: { type: 'INVOICE' } }
+    },
+    include: { car: true, invoices: true }
+  });
+  for (const r of paid) {
+    try { await createInvoiceForReservation(r, 'INVOICE', company); } catch (e) { /* ignore */ }
+  }
 }
 async function createInvoiceForReservation(reservation, type = 'PROFORMA', companyCache) {
   if (!reservation) return null;
@@ -399,6 +421,7 @@ app.get('/api/reservations', async (req, res) => {
     include: { car: true, invoices: true }
   });
   await normalizeReservationExpiry(list);
+  await ensureInvoicesForPaidReservations();
   // auto-issue invoice for paid reservations lacking invoice
   const company = await prisma.companyInfo.findFirst();
   for (const r of list) {
@@ -517,6 +540,7 @@ app.get('/api/reservations/:id', async (req, res) => {
   });
   if (!reservation) return res.status(404).json({ error: 'Not found' });
   await normalizeReservationExpiry([reservation]);
+  await ensureInvoicesForPaidReservations();
   if ((reservation.status || '').toUpperCase() === 'PAID') {
     const hasInvoice = (reservation.invoices || []).some(inv => (inv.type || '').toUpperCase() === 'INVOICE');
     if (!hasInvoice) {
