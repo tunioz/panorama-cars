@@ -1402,11 +1402,10 @@
   function renderAdminDashboard() {
     mountAdminIfNeeded(true);
     const root = $('#adminRoot');
-    const today = new Date();
-    const startStr = today.toISOString().slice(0,10);
-    const end = new Date(); end.setDate(end.getDate()+7);
-    const endStr = end.toISOString().slice(0,10);
-    let range = { from: startStr, to: endStr };
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    let range = { from: monthStart.toISOString().slice(0,10), to: monthEnd.toISOString().slice(0,10) };
     root.innerHTML = adminNav('dashboard') + `
       <div class="panel" style="padding:16px; display:grid; gap:12px;">
         <div class="grid-3">
@@ -1421,48 +1420,62 @@
         </div>
         <div class="grid-3" id="dashStats"></div>
         <div class="panel" style="padding:14px;">
+          <div class="section-title">Платени резервации (период)</div>
+          <table class="table">
+            <thead><tr><th>№</th><th>Кола</th><th>Клиент</th><th>Сума</th><th>От</th><th>До</th></tr></thead>
+            <tbody id="paidRows">
+              <tr><td colspan="6">Зареждане...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel" style="padding:14px;">
           <div class="section-title">Очакващи одобрение</div>
           <table class="table">
-            <thead><tr><th>№</th><th>Кола</th><th>Клиент</th><th>Статус</th></tr></thead>
-            <tbody>
-              <tr><td colspan="4">Зареждане...</td></tr>
+            <thead><tr><th>№</th><th>Кола</th><th>Клиент</th><th>Статус</th><th></th></tr></thead>
+            <tbody id="pendingRows">
+              <tr><td colspan="5">Зареждане...</td></tr>
             </tbody>
           </table>
         </div>
       </div>
     `;
-    const renderStats = (data) => {
-      const { reservations = [], carsCount = 0 } = data;
+    const renderStats = (reservations=[], carsCount=0) => {
       const f = new Date(range.from); const t = new Date(range.to); t.setHours(23,59,59,999);
-      const inRange = reservations.filter(r => {
-        const rf = new Date(r.from || r.createdAt || Date.now());
-        return rf >= f && rf <= t;
-      });
+      const inPeriod = (r) => {
+        const start = new Date(r.from || r.createdAt || Date.now());
+        const end = new Date(r.to || r.from || r.createdAt || Date.now());
+        if (isNaN(start) || isNaN(end)) return false;
+        return start <= t && end >= f; // интерсект с периода
+      };
+      const inRange = reservations.filter(inPeriod);
+      const paidList = inRange.filter(r => (r.status||'').toUpperCase() === 'PAID');
       const count = inRange.length;
-      const turnover = inRange.reduce((s,r) => s + Number(r.total||0), 0);
+      const turnover = paidList.reduce((s,r) => s + Number(r.total||0), 0);
+      const paid = paidList.length;
+      const pending = inRange.filter(r => (r.status||'').toUpperCase() === 'REQUESTED').length;
+      const declined = inRange.filter(r => (r.status||'').toUpperCase() === 'DECLINED').length;
       $('#dashStats').innerHTML = `
         <div class="panel" style="padding:14px;">
-          <div class="section-title">Брой резервации</div>
+          <div class="section-title">Общ брой резервации</div>
           <h2><a href="#/admin/reservations" style="color:inherit;text-decoration:none;">${count}</a></h2>
+        </div>
+        <div class="panel" style="padding:14px;">
+          <div class="section-title">Платени</div>
+          <h2><a href="#/admin/reservations" style="color:inherit;text-decoration:none;">${paid}</a></h2>
+        </div>
+        <div class="panel" style="padding:14px;">
+          <div class="section-title">Чакащи одобрение</div>
+          <h2><a href="#/admin/reservations" style="color:inherit;text-decoration:none;">${pending}</a></h2>
+        </div>
+        <div class="panel" style="padding:14px;">
+          <div class="section-title">Отказани</div>
+          <h2><a href="#/admin/reservations" style="color:inherit;text-decoration:none;">${declined}</a></h2>
         </div>
         <div class="panel" style="padding:14px;">
           <div class="section-title">Оборот</div>
           <h2><a href="#/admin/invoices" style="color:inherit;text-decoration:none;">€${turnover.toFixed(2)}</a></h2>
         </div>
-        <div class="panel" style="padding:14px;">
-          <div class="section-title">Коли</div>
-          <h2><a href="#/admin/cars" style="color:inherit;text-decoration:none;">${carsCount}</a></h2>
-        </div>
       `;
-    };
-    const loadPending = (reservations=[]) => {
-      const pending = reservations.filter(r => (r.status||'').toUpperCase() === 'REQUESTED');
-      const tbody = $('#adminRoot #resRowsPending') || $('#adminRoot tbody');
-      if (tbody) {
-        tbody.innerHTML = pending.length
-          ? pending.map(p => `<tr><td>${p.seq ?? ''}</td><td>${p.car?.brand||''} ${p.car?.model||''}</td><td>${p.driverName||''}</td><td><span class="tag">Заявка</span></td></tr>`).join('')
-          : '<tr><td colspan="4">Няма чакащи.</td></tr>';
-      }
     };
     const fetchData = async () => {
       try {
@@ -1470,16 +1483,44 @@
           apiFetch('/api/reservations'),
           apiFetch('/api/cars')
         ]);
-        renderStats({ reservations, carsCount: carsList?.length || 0 });
-        const tbody = root.querySelector('tbody');
-        if (tbody) {
-          const pending = (reservations||[]).filter(r => (r.status||'').toUpperCase() === 'REQUESTED');
-          tbody.innerHTML = pending.length
-            ? pending.map(p => `<tr><td>${p.seq ?? ''}</td><td>${p.car?.brand||''} ${p.car?.model||''}</td><td>${p.driverName||''}</td><td><span class="tag">Заявка</span></td></tr>`).join('')
-            : '<tr><td colspan="4">Няма чакащи.</td></tr>';
+        renderStats(reservations, carsList?.length || 0);
+        const f = new Date(range.from); const t = new Date(range.to); t.setHours(23,59,59,999);
+        const inPeriod = (r) => {
+          const start = new Date(r.from || r.createdAt || Date.now());
+          const end = new Date(r.to || r.from || r.createdAt || Date.now());
+          if (isNaN(start) || isNaN(end)) return false;
+          return start <= t && end >= f;
+        };
+        const inRange = (reservations||[]).filter(inPeriod);
+        const paid = inRange.filter(r => (r.status||'').toUpperCase() === 'PAID');
+        const pending = inRange.filter(r => (r.status||'').toUpperCase() === 'REQUESTED');
+        const paidTbody = $('#paidRows');
+        if (paidTbody) {
+          paidTbody.innerHTML = paid.length
+            ? paid.map(p => `<tr>
+                <td>${p.seq ?? ''}</td>
+                <td>${p.car?.brand||''} ${p.car?.model||''}</td>
+                <td>${p.driverName||''}</td>
+                <td>€${Number(p.total||0).toFixed(2)}</td>
+                <td>${fmtDate(p.from)}</td>
+                <td>${fmtDate(p.to)}</td>
+              </tr>`).join('')
+            : '<tr><td colspan="6">Няма платени резервации за периода.</td></tr>';
+        }
+        const pendTbody = $('#pendingRows');
+        if (pendTbody) {
+          pendTbody.innerHTML = pending.length
+            ? pending.map(p => `<tr>
+                <td>${p.seq ?? ''}</td>
+                <td>${p.car?.brand||''} ${p.car?.model||''}</td>
+                <td>${p.driverName||''}</td>
+                <td><span class="tag">Заявка</span></td>
+                <td><a class="btn-secondary" href="#/admin/reservations" style="height:32px;display:grid;place-items:center;">Управление</a></td>
+              </tr>`).join('')
+            : '<tr><td colspan="5">Няма чакащи резервации.</td></tr>';
         }
       } catch {
-        renderStats({ reservations: [], carsCount: 0 });
+        renderStats([], 0);
       }
     };
     fetchData();
@@ -1870,11 +1911,24 @@
   function renderAdminReservations() {
     mountAdminIfNeeded(true);
     const root = $('#adminRoot');
+    const params = new URLSearchParams((location.hash.split('?')[1] || ''));
+    const focusId = params.get('id');
     let dataRows = [];
     root.innerHTML = adminNav('reservations') + `
       <div class="panel" style="padding:16px;">
         <table class="table">
-          <thead><tr><th>№</th><th>Кола</th><th>Клиент</th><th>От</th><th>До</th><th>Дни</th><th>Сума</th><th>Проформа</th><th>Фактура</th><th>Статус</th><th></th></tr></thead>
+          <thead>
+            <tr>
+              <th>№</th>
+              <th>Кола</th>
+              <th>Клиент</th>
+              <th>Период</th>
+              <th>Дни</th>
+              <th>Обща сума</th>
+              <th>Фактури</th>
+              <th>Статус</th>
+            </tr>
+          </thead>
           <tbody id="resRows"></tbody>
         </table>
       </div>
@@ -1913,22 +1967,25 @@
         const inv = latestByType(r.invoices, 'INVOICE') || latestAny(r.invoices);
         const fmtInvDate = (x) => fmtDate(x?.issueDate || x?.createdAt || x?.updatedAt || '');
         const fmtInvNum = (x) => x?.number || '(без номер)';
+        const days = (() => { const a=new Date(r.from), b=new Date(r.to); const d=Math.max(1, Math.ceil((b-a)/86400000)); return d; })();
+        const period = `${fmtDate(r.from)}<br>${fmtDate(r.to)}`;
+        const invoiceCell = `
+          ${pro ? `<a href="#/admin/invoices?id=${r.id}" class="link">${fmtInvNum(pro)}</a>` : '—'}
+          ${inv ? `<br><a href="#/admin/invoices?id=${r.id}" class="link">${fmtInvNum(inv)}</a>` : ''}
+        `;
+        const seqVal = (r.seq ?? r.id ?? (idx+1));
         return `
         <tr data-res="${r.id}" class="row-status-${r.status}">
-          <td>${r.seq ?? (idx+1)}</td>
+          <td>${seqVal}</td>
           <td>${(r.car?.brand||'').trim()} ${(r.car?.model||'').trim() || r.carId || ''}</td>
           <td>${r.driverName||r.driver?.name||''}</td>
-          <td>${fmtDate(r.from)}</td><td>${fmtDate(r.to)}</td>
-          <td>${(function(){ const a=new Date(r.from), b=new Date(r.to); const d=Math.max(1, Math.ceil((b-a)/86400000)); return d; })()}</td>
-          <td>${r.total ? `€${r.total}` : '—'}</td>
-          <td>${pro ? `${fmtInvNum(pro)}<br><span style="color:#556;">${fmtInvDate(pro)}</span>` : '—'}</td>
-          <td>${inv ? `${fmtInvNum(inv)}<br><span style="color:#556;">${fmtInvDate(inv)}</span>` : '—'}</td>
+          <td>${period}</td>
+          <td>${days}</td>
+          <td>${r.total ? `€${Number(r.total).toFixed(2)}` : '—'}</td>
+          <td>${invoiceCell}</td>
           <td><select class="select" data-status="${r.id}" style="height:32px;">
               ${RES_STATUS.map(s => `<option value="${s.value}" ${r.status===s.value?'selected':''}>${s.label}</option>`).join('')}
           </select></td>
-          <td class="row" style="gap:6px;">
-            <button class="btn-secondary" data-invoice="${r.id}" style="height:32px;">${r.status==='PAID'?'Фактура':'Проформа'}</button>
-          </td>
         </tr>
       `;
       }).join('');
@@ -1941,10 +1998,6 @@
         renderRows(dataRows);
         try { await apiFetch(`/api/reservations/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }); }
         catch {}
-      });
-      $$('[data-invoice]').forEach(b => b.onclick = () => {
-        const id = b.getAttribute('data-invoice');
-        navigate(`#/admin/invoices?id=${id}`);
       });
       $$('tr[data-res]').forEach(row => row.onclick = (e) => {
         if (e.target.closest('select') || e.target.closest('button')) return;
@@ -1963,9 +2016,11 @@
           } catch { return { ...r, invoices: [] }; }
         }));
         renderRows(rs || []);
+        if (focusId) openReservationModal(focusId);
       } catch {
         const rs = storage.get('cr_reservations', []);
         renderRows(rs);
+        if (focusId) openReservationModal(focusId);
       }
     };
     load();
@@ -2042,7 +2097,7 @@
       <div class="panel" style="padding:16px; margin-bottom:12px;">
         <div class="header" style="padding:0 0 12px 0; border:0;"><h2>Списък фактури/проформи</h2></div>
         <table class="table">
-          <thead><tr><th>Номер</th><th>Тип</th><th>Дата</th><th>Резервация</th><th>Статус</th><th></th></tr></thead>
+          <thead><tr><th>Номер</th><th>Тип</th><th>Дата</th><th>Резервация</th><th></th></tr></thead>
           <tbody id="invList"></tbody>
         </table>
       </div>
@@ -2057,26 +2112,47 @@
     // списък с фактури
     (async () => {
       try {
-        const list = await apiFetch('/api/invoices');
+        const [list, resList] = await Promise.all([
+          apiFetch('/api/invoices'),
+          apiFetch('/api/reservations').catch(() => [])
+        ]);
+        const resMap = new Map((resList||[]).map(r => [String(r.id), r]));
         $('#invList').innerHTML = (list||[]).map(inv => {
           const dt = inv.issueDate ? fmtDate(inv.issueDate) : '';
           const t = (inv.type || '').toString().toUpperCase();
           const typeLabel = t.includes('INV') ? 'Фактура' : 'Проформа';
+          const resObj = resMap.get(String(inv.reservationId));
+          const resLabel = resObj?.seq ?? resObj?.id ?? inv.reservationId ?? '';
+          const resLink = resLabel ? `<a class="link" href="#/admin/reservations" data-reslink="${inv.reservationId}">${resLabel}</a>` : '';
           return `<tr>
-            <td>${inv.number || '—'}</td>
+            <td><a class="link" data-open-inv="${inv.id || ''}" href="javascript:void(0);">${inv.number || '—'}</a></td>
             <td>${typeLabel}</td>
             <td>${dt}</td>
-            <td>${inv.reservationId || ''}</td>
-            <td>${(inv.status || '').toString().toUpperCase() || ''}</td>
+            <td>${resLink}</td>
             <td><button class="btn-secondary" data-open="${inv.reservationId}" style="height:32px;">Отвори</button></td>
           </tr>`;
-        }).join('') || '<tr><td colspan="6">Няма фактури.</td></tr>';
+        }).join('') || '<tr><td colspan="5">Няма фактури.</td></tr>';
         $$('[data-open]').forEach(b => b.onclick = () => {
           const rid = b.getAttribute('data-open');
-          if (rid) navigate(`#/admin/invoices?id=${rid}`);
+          if (rid) navigate(`#/admin/reservations?id=${rid}`);
+        });
+        $$('[data-reslink]').forEach(a => a.onclick = (e) => {
+          e.preventDefault();
+          const rid = a.getAttribute('data-reslink');
+          if (rid) navigate(`#/admin/reservations?id=${rid}`);
+        });
+        $$('[data-open-inv]').forEach(a => a.onclick = async (e) => {
+          e.preventDefault();
+          const invId = a.getAttribute('data-open-inv');
+          if (!invId) return;
+          try {
+            const inv = (list||[]).find(x => String(x.id) === String(invId));
+            const resIdForModal = inv?.reservationId;
+            await loadInvoiceView(resIdForModal, true);
+          } catch {}
         });
       } catch {
-        $('#invList').innerHTML = '<tr><td colspan="6">Неуспешно зареждане на фактурите.</td></tr>';
+        $('#invList').innerHTML = '<tr><td colspan="5">Неуспешно зареждане на фактурите.</td></tr>';
       }
     })();
     if (resId) {
@@ -2084,9 +2160,9 @@
       else loadInvoiceView(resId);
     }
 
-    async function loadInvoiceView(reservationId) {
+    async function loadInvoiceView(reservationId, asModal = false) {
       const host = $('#invEditor');
-      host.innerHTML = '<div>Зареждане...</div>';
+      if (!asModal) host.innerHTML = '<div>Зареждане...</div>';
       let reservation = null;
       let invoice = null;
       await loadCompanyCache();
@@ -2102,16 +2178,24 @@
       if (invoice && !invoice.number) {
         try { invoice = await apiFetch(`/api/invoices/${invoice.id}`, { method: 'PUT', body: JSON.stringify({}) }); } catch {}
       }
-      if (!reservation) { host.innerHTML = '<div style="color:#b42318;">Резервацията не е намерена.</div>'; return; }
+      if (!reservation) {
+        if (asModal) { showModal('<div style="padding:16px;">Резервацията не е намерена.</div>'); }
+        else { host.innerHTML = '<div style="color:#b42318;">Резервацията не е намерена.</div>'; }
+        return;
+      }
       const days = (() => { const a=new Date(reservation.from), b=new Date(reservation.to); return Math.max(1, Math.ceil((b-a)/86400000)); })();
-      const items = normalizeInvoiceItems(invoice?.items || [
-        {
+      const resTotal = Number(reservation.total || invoice?.totals?.total || invoice?.totals?.gross || invoice?.total || 0);
+      const baseUnit = resTotal && days ? (resTotal / days) : (reservation.car?.pricePerDay || 0);
+      let items = normalizeInvoiceItems(invoice?.items || []);
+      const needsDefault = !items.length || calcInvoiceTotals(items).total === 0;
+      if (needsDefault) {
+        items = normalizeInvoiceItems([{
           description: `Наем на автомобил ${reservation.car?.brand||''} ${reservation.car?.model||''} (${fmtDate(new Date(reservation.from))} → ${fmtDate(new Date(reservation.to))})`,
           qty: days,
-          unitPrice: reservation.total && days ? reservation.total / days : (reservation.car?.pricePerDay || 0),
+          unitPrice: baseUnit,
           vatRate: 20
-        }
-      ]);
+        }]);
+      }
       const totals = calcInvoiceTotals(items);
       const sup = {
         name: invoice?.supplierName || companyCache?.name || '',
@@ -2158,7 +2242,7 @@
           <td style="text-align:right;">€${it.totalGross.toFixed(2)}</td>
         </tr>
       `).join('');
-      host.innerHTML = `
+      const html = `
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
           <div>
             <div class="section-title">${payload.type==='INVOICE'?'Фактура':'Проформа'}</div>
@@ -2206,21 +2290,17 @@
         ${payload.notes ? `<div style="margin-top:8px;color:#556;">Бележки: ${payload.notes}</div>` : ''}
         <div style="margin-top:12px;color:#556;">Начин на плащане: ${payload.paymentMethod || ''} ${payload.paymentTerms ? ' / Условия: '+payload.paymentTerms : ''}</div>
       `;
-      $('#editInv', host).onclick = () => {
-        const q = new URLSearchParams(location.hash.split('?')[1] || '');
-        q.set('edit','1');
-        location.hash = `#/admin/invoices?${q.toString()}`;
-      };
-      $('#printInvView', host).onclick = () => {
-        // reuse print logic by opening print template
-        const btn = document.createElement('button');
-        btn.id = 'printTmp';
-        // simulate using existing print code
-        const hash = location.hash;
-        const q = new URLSearchParams(hash.split('?')[1] || '');
-        q.set('edit','1'); // ensure editor renders print logic; but simpler: call window.print on rendered view
-        window.print();
-      };
+      if (asModal) {
+        showModal(`<div style="max-width:960px;max-height:80vh;overflow:auto;">${html}</div>`);
+      } else {
+        host.innerHTML = html;
+        $('#editInv', host).onclick = () => {
+          const q = new URLSearchParams(location.hash.split('?')[1] || '');
+          q.set('edit','1');
+          location.hash = `#/admin/invoices?${q.toString()}`;
+        };
+        $('#printInvView', host).onclick = () => { window.print(); };
+      }
     }
 
     async function loadInvoiceEditor(reservationId) {

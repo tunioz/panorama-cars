@@ -576,6 +576,8 @@ app.patch('/api/reservations/:id/status', async (req, res) => {
 
 // Invoices
 app.get('/api/invoices', async (req, res) => {
+  // Уверяваме се, че платените резервации имат фактура
+  await ensureInvoicesForPaidReservations();
   const reservationId = req.query.reservationId;
   const where = reservationId ? { reservationId: String(reservationId) } : {};
   const list = await prisma.invoice.findMany({

@@ -10,4 +10,3 @@
     "backup:git": "git add -A && git commit -m \"backup: dev snapshot\" && git push"
   }
 }
-
