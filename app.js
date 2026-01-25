@@ -1402,26 +1402,93 @@
   function renderAdminDashboard() {
     mountAdminIfNeeded(true);
     const root = $('#adminRoot');
-    const rs = storage.get('cr_reservations', []);
-    const pending = rs.filter(r => r.status === 'pending');
+    const today = new Date();
+    const startStr = today.toISOString().slice(0,10);
+    const end = new Date(); end.setDate(end.getDate()+7);
+    const endStr = end.toISOString().slice(0,10);
+    let range = { from: startStr, to: endStr };
     root.innerHTML = adminNav('dashboard') + `
       <div class="panel" style="padding:16px; display:grid; gap:12px;">
         <div class="grid-3">
-          <div class="panel" style="padding:14px;"><div class="section-title">Брой коли</div><h2>${cars.length}</h2></div>
-          <div class="panel" style="padding:14px;"><div class="section-title">Брой резервации</div><h2>${rs.length}</h2></div>
-          <div class="panel" style="padding:14px;"><div class="section-title">Оборот (демо)</div><h2>$${(rs.length*50).toFixed(2)}</h2></div>
+          <div>
+            <div class="section-title">Период</div>
+            <div class="grid-2">
+              <input id="dashFrom" type="date" class="input" value="${range.from}">
+              <input id="dashTo" type="date" class="input" value="${range.to}">
+            </div>
+          </div>
+          <div></div><div></div>
         </div>
+        <div class="grid-3" id="dashStats"></div>
         <div class="panel" style="padding:14px;">
           <div class="section-title">Очакващи одобрение</div>
           <table class="table">
             <thead><tr><th>№</th><th>Кола</th><th>Клиент</th><th>Статус</th></tr></thead>
             <tbody>
-              ${pending.map(p => `<tr><td>${p.id}</td><td>${p.carId}</td><td>${p.driver?.name||''}</td><td><span class="tag">pending</span></td></tr>`).join('')}
+              <tr><td colspan="4">Зареждане...</td></tr>
             </tbody>
           </table>
         </div>
       </div>
     `;
+    const renderStats = (data) => {
+      const { reservations = [], carsCount = 0 } = data;
+      const f = new Date(range.from); const t = new Date(range.to); t.setHours(23,59,59,999);
+      const inRange = reservations.filter(r => {
+        const rf = new Date(r.from || r.createdAt || Date.now());
+        return rf >= f && rf <= t;
+      });
+      const count = inRange.length;
+      const turnover = inRange.reduce((s,r) => s + Number(r.total||0), 0);
+      $('#dashStats').innerHTML = `
+        <div class="panel" style="padding:14px;">
+          <div class="section-title">Брой резервации</div>
+          <h2><a href="#/admin/reservations" style="color:inherit;text-decoration:none;">${count}</a></h2>
+        </div>
+        <div class="panel" style="padding:14px;">
+          <div class="section-title">Оборот</div>
+          <h2><a href="#/admin/invoices" style="color:inherit;text-decoration:none;">€${turnover.toFixed(2)}</a></h2>
+        </div>
+        <div class="panel" style="padding:14px;">
+          <div class="section-title">Коли</div>
+          <h2><a href="#/admin/cars" style="color:inherit;text-decoration:none;">${carsCount}</a></h2>
+        </div>
+      `;
+    };
+    const loadPending = (reservations=[]) => {
+      const pending = reservations.filter(r => (r.status||'').toUpperCase() === 'REQUESTED');
+      const tbody = $('#adminRoot #resRowsPending') || $('#adminRoot tbody');
+      if (tbody) {
+        tbody.innerHTML = pending.length
+          ? pending.map(p => `<tr><td>${p.seq ?? ''}</td><td>${p.car?.brand||''} ${p.car?.model||''}</td><td>${p.driverName||''}</td><td><span class="tag">Заявка</span></td></tr>`).join('')
+          : '<tr><td colspan="4">Няма чакащи.</td></tr>';
+      }
+    };
+    const fetchData = async () => {
+      try {
+        const [reservations, carsList] = await Promise.all([
+          apiFetch('/api/reservations'),
+          apiFetch('/api/cars')
+        ]);
+        renderStats({ reservations, carsCount: carsList?.length || 0 });
+        const tbody = root.querySelector('tbody');
+        if (tbody) {
+          const pending = (reservations||[]).filter(r => (r.status||'').toUpperCase() === 'REQUESTED');
+          tbody.innerHTML = pending.length
+            ? pending.map(p => `<tr><td>${p.seq ?? ''}</td><td>${p.car?.brand||''} ${p.car?.model||''}</td><td>${p.driverName||''}</td><td><span class="tag">Заявка</span></td></tr>`).join('')
+            : '<tr><td colspan="4">Няма чакащи.</td></tr>';
+        }
+      } catch {
+        renderStats({ reservations: [], carsCount: 0 });
+      }
+    };
+    fetchData();
+    const syncRange = () => {
+      range = { from: $('#dashFrom').value || range.from, to: $('#dashTo').value || range.to };
+      fetchData();
+    };
+    $('#dashFrom').onchange = syncRange;
+    $('#dashTo').onchange = syncRange;
   }
   function renderAdminCars() {
     mountAdminIfNeeded(true);
