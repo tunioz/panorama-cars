@@ -1194,11 +1194,7 @@
       <section id="step4" class="panel" style="margin-bottom:12px; padding:0;">
         <div class="header"><h2>Резервация изпратена</h2></div>
         <div style="padding:16px;">
-          <p>Вашата заявка № <strong>${paramsUrl.get('id') || draft.id}</strong> е получена и очаква одобрение.</p>
-          <div class="row" style="gap:8px;">
-            <a class="btn-primary" href="#/">Към начална страница</a>
-            <a class="btn-secondary" href="#/admin/reservations">Към админ панел (демо)</a>
-          </div>
+          <p>Вашата заявка № <strong>${paramsUrl.get('id') || draft.id}</strong> е получена и очаква одобрение. Ще се свържем с вас съвсем скоро.</p>
         </div>
       </section>
     `;
@@ -1279,76 +1275,518 @@
 
     // Стъпка 2
     if (step >= 2) {
-      const validateStep2 = () => {
-        clearErrors();
-        let ok = true;
-        if (!$('#dName').value.trim()) { setError($('#dName'), 'Име е задължително'); ok = false; }
-        if (!$('#dPhone').value.trim()) { setError($('#dPhone'), 'Телефон е задължителен'); ok = false; }
-        if (!$('#dEmail').value.trim()) { setError($('#dEmail'), 'Имейл е задължителен'); ok = false; }
-        if (!$('#dLicense').value.trim()) { setError($('#dLicense'), 'Номер на книжка е задължителен'); ok = false; }
-        if (!ok) scrollToError();
-        return ok;
+      const errorMessages = {
+        name: {
+          empty: "Моля, въведете име и фамилия",
+          invalid: "Моля, въведете валидно име на кирилица (поне 2 думи)",
+          tooShort: "Всяко име трябва да съдържа поне 2 букви"
+        },
+        phone: {
+          empty: "Моля, въведете телефонен номер",
+          invalid: "Моля, въведете валиден български мобилен номер (087/088/089)",
+          wrongFormat: "Форматът трябва да бъде: 0879123456"
+        },
+        email: {
+          empty: "Моля, въведете имейл адрес",
+          invalid: "Моля, въведете валиден имейл адрес",
+          wrongFormat: "Форматът трябва да бъде: example@domain.com"
+        },
+        license: {
+          empty: "Моля, въведете номер на шофьорска книжка",
+          invalid: "Моля, въведете валиден номер (9 цифри)",
+          wrongLength: "Номерът трябва да съдържа точно 9 цифри"
+        }
       };
+
+      const normSpaces = (v='') => v.replace(/\s+/g, ' ').trim();
+      const setFieldState = (inputEl, res, showError) => {
+        if (!inputEl) return;
+        const holder = inputEl.parentElement || inputEl;
+        const msgEl = holder.querySelector('.err-msg');
+        if (msgEl) msgEl.remove();
+        inputEl.classList.remove('error','valid');
+        if (res?.ok) {
+          if (res.value !== undefined) inputEl.value = res.value;
+          inputEl.classList.add('valid');
+        } else {
+          inputEl.classList.remove('valid');
+          inputEl.classList.remove('error');
+          if (showError && res?.message) {
+            inputEl.classList.add('error');
+            const m = document.createElement('span');
+            m.className = 'err-msg';
+            m.textContent = res.message;
+            holder.appendChild(m);
+          }
+        }
+      };
+
+      const validators = {
+        name(val) {
+          const v = normSpaces(val);
+          if (!v) return { ok:false, err:'empty', value:'' };
+          const re = /^[А-Яа-яЁёЪъЬьЮюЯяЩщШшЧчЦцЙйѝІіҐґЇї\- ]+$/u;
+          if (!re.test(v)) return { ok:false, err:'invalid', value:v };
+          const parts = v.split(' ').filter(Boolean);
+          if (parts.length < 2) return { ok:false, err:'invalid', value:v };
+          if (parts.some(p => p.replace(/-/g,'').length < 2)) return { ok:false, err:'tooShort', value:v };
+          return { ok:true, value:v };
+        },
+        phone(val) {
+          const digits = (val || '').replace(/\D/g, '');
+          if (!digits) return { ok:false, err:'empty', value:'' };
+          if (!/^0(87|88|89)\d{7}$/.test(digits)) {
+            const err = digits.length === 10 ? 'invalid' : 'wrongFormat';
+            return { ok:false, err, value:digits };
+          }
+          return { ok:true, value:digits };
+        },
+        email(val) {
+          const v = normSpaces(val).toLowerCase();
+          if (!v) return { ok:false, err:'empty', value:'' };
+          const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+          if (!re.test(v)) return { ok:false, err:'invalid', value:v };
+          return { ok:true, value:v };
+        },
+        license(val) {
+          const digits = (val || '').replace(/\D/g, '');
+          if (!digits) return { ok:false, err:'empty', value:'' };
+          if (digits.length !== 9) return { ok:false, err:'wrongLength', value:digits };
+          if (!/^\d{9}$/.test(digits)) return { ok:false, err:'invalid', value:digits };
+          return { ok:true, value:digits };
+        }
+      };
+
+      const fields = {
+        name: $('#dName'),
+        phone: $('#dPhone'),
+        email: $('#dEmail'),
+        license: $('#dLicense')
+      };
+      const fieldLabels = {
+        name: 'Име и фамилия',
+        phone: 'Телефон',
+        email: 'Имейл',
+        license: '№ шофьорска книжка'
+      };
+      const touched = { name:false, phone:false, email:false, license:false };
+
+      const runValidation = (key, showError = false) => {
+        const input = fields[key];
+        const res = validators[key](input?.value || '');
+        const message = res.ok ? '' : errorMessages[key][res.err] || errorMessages[key].invalid;
+        setFieldState(input, { ...res, message }, showError);
+        return res;
+      };
+
+      const validateAll = (showErrors = false) => {
+        const values = {};
+        let ok = true;
+        Object.keys(fields).forEach(k => {
+          const res = runValidation(k, showErrors);
+          if (!res.ok) ok = false;
+          if (res.ok) values[k] = res.value;
+        });
+        if (!ok && showErrors) scrollToError();
+        return { ok, values };
+      };
+
+      const updateNextBtn = () => {
+        const res = validateAll(false);
+        const btn = $('#next2');
+        if (btn) {
+          btn.disabled = !res.ok;
+          const errors = Object.keys(fields).map(k => {
+            const r = validators[k](fields[k]?.value || '');
+            if (r.ok) return null;
+            const msg = errorMessages[k][r.err] || errorMessages[k].invalid;
+            return `${fieldLabels[k]}: ${msg}`;
+          }).filter(Boolean);
+          if (errors.length) btn.title = errors.join('\n');
+          else btn.removeAttribute('title');
+        }
+      };
+
+      Object.entries(fields).forEach(([k, input]) => {
+        if (!input) return;
+        input.addEventListener('blur', () => {
+          touched[k] = true;
+          runValidation(k, true);
+          updateNextBtn();
+        });
+        input.addEventListener('input', () => {
+          runValidation(k, touched[k]);
+          updateNextBtn();
+        });
+      });
+
+      $('#next2')?.setAttribute('disabled','disabled');
       $('#back1')?.addEventListener('click', () => gotoStep(1));
       $('#next2')?.addEventListener('click', () => {
-        if (!validateStep2()) return;
+        const res = validateAll(true);
+        if (!res.ok) return;
         draft.driver = {
-          name: $('#dName').value, phone: $('#dPhone').value, email: $('#dEmail').value,
-          license: $('#dLicense').value, birth: '', addr: ''
+          name: res.values.name,
+          phone: res.values.phone,
+          email: res.values.email,
+          license: res.values.license,
+          birth: '', addr: ''
         };
         gotoStep(3);
       });
+      updateNextBtn();
     }
 
     // Стъпка 3
     if (step >= 3) {
-      const validateStep3 = () => {
-        clearErrors();
-        let ok = true;
-        const type = invState.type === 'company' ? 'company' : 'individual';
-        if (type === 'individual') {
-          if (!$('#iNameInd').value.trim()) { setError($('#iNameInd'), 'Име е задължително'); ok = false; }
-          if (!$('#iEgn').value.trim()) { setError($('#iEgn'), 'ЕГН е задължително'); ok = false; }
-          if (!$('#iAddrInd').value.trim()) { setError($('#iAddrInd'), 'Адрес е задължителен'); ok = false; }
-          if (!$('#iEmailInd').value.trim()) { setError($('#iEmailInd'), 'Имейл е задължителен'); ok = false; }
-        } else {
-          if (!$('#iNameCo').value.trim()) { setError($('#iNameCo'), 'Име на фирма е задължително'); ok = false; }
-          if (!$('#iNumCo').value.trim()) { setError($('#iNumCo'), 'ЕИК е задължителен'); ok = false; }
-          if (!$('#iAddrCo').value.trim()) { setError($('#iAddrCo'), 'Адрес е задължителен'); ok = false; }
-          if (!$('#iEmailCo').value.trim()) { setError($('#iEmailCo'), 'Имейл е задължителен'); ok = false; }
+      const invState = { ...(draft.invoice || {}), type: draft.invoice?.type === 'company' ? 'company' : 'individual' };
+      const normSpaces = (v='') => v.replace(/\s+/g, ' ').trim();
+      const setFieldState = (inputEl, res, showError) => {
+        if (!inputEl) return;
+        const holder = inputEl.parentElement || inputEl;
+        const msgEl = holder.querySelector('.err-msg');
+        if (msgEl) msgEl.remove();
+        inputEl.classList.remove('error','valid');
+        if (res?.ok) {
+          if (res.value !== undefined) inputEl.value = res.value;
+          if (res.value !== '') inputEl.classList.add('valid');
+        } else if (showError && res?.message) {
+          inputEl.classList.add('error');
+          const m = document.createElement('span');
+          m.className = 'err-msg';
+          m.textContent = res.message;
+          holder.appendChild(m);
         }
-        if (!ok) scrollToError();
-        return ok;
       };
-      const invState = draft.invoice || { type: 'individual' };
+      const errorMessagesInv = {
+        name: {
+          empty: 'Моля, въведете име и фамилия',
+          invalid: 'Моля, въведете валидно име на кирилица (поне 2 думи)',
+          tooShort: 'Всяко име трябва да съдържа поне 2 букви'
+        },
+        company: {
+          empty: 'Моля, въведете име на фирмата',
+          invalid: 'Моля, въведете пълно име с правна форма (ООД/ЕООД/АД/ЕАД/СД/КД/ЕТ/ДП)'
+        },
+        egn: {
+          empty: 'Моля, въведете ЕГН',
+          wrongLength: 'ЕГН трябва да съдържа 10 цифри',
+          invalidDate: 'Невалидна дата в ЕГН',
+          invalidChecksum: 'Невалидна контролна сума на ЕГН'
+        },
+        eik: {
+          empty: 'Моля, въведете ЕИК',
+          invalid: 'ЕИК трябва да е 9 или 13 цифри',
+          invalidChecksum: 'Невалидна контролна сума на ЕИК'
+        },
+        vat: {
+          invalid: 'Моля, въведете валиден ДДС номер (BG + 9 или 10 цифри)'
+        },
+        mol: {
+          empty: 'Моля, въведете име на представляващо лице',
+          invalid: 'Моля, въведете валидно име на кирилица (поне 2 думи)'
+        },
+        addr: {
+          empty: 'Моля, въведете адрес',
+          invalid: 'Адресът трябва да е поне 10 символа и да съдържа улица/номер'
+        },
+        email: {
+          empty: 'Моля, въведете имейл адрес',
+          invalid: 'Моля, въведете валиден имейл адрес'
+        },
+        bank: {
+          invalid: 'Името на банката трябва да е поне 3 символа'
+        },
+        iban: {
+          invalid: 'Моля, въведете валиден IBAN (BG + 20 знака)'
+        },
+        bic: {
+          invalid: 'Моля, въведете валиден BIC (8 или 11 символа, съдържащ BG)'
+        },
+        bankDeps: {
+          missingIban: 'IBAN е задължителен при попълнена банка',
+          missingBic: 'BIC е задължителен при попълнена банка'
+        }
+      };
+
+      const validatorsInv = {
+        fullName(v) {
+          const val = normSpaces(v);
+          if (!val) return { ok:false, err:'empty', value:'' };
+          const re = /^[А-Яа-яЁёЪъЬьЮюЯяЩщШшЧчЦцЙйѝІіҐґЇї\- ]+$/u;
+          if (!re.test(val)) return { ok:false, err:'invalid', value:val };
+          const parts = val.split(' ').filter(Boolean);
+          if (parts.length < 2) return { ok:false, err:'invalid', value:val };
+          if (parts.some(p => p.replace(/-/g,'').length < 2)) return { ok:false, err:'tooShort', value:val };
+          return { ok:true, value:val };
+        },
+        companyName(v) {
+          const val = normSpaces(v);
+          if (!val) return { ok:false, err:'empty', value:'' };
+          const suffixRe = /(ООД|ЕООД|АД|ЕАД|СД|КД|ЕТ|ДП|OOD|EOOD|AD|EAD|SD|KD|ET|DP)$/i;
+          if (val.length < 3 || !suffixRe.test(val)) return { ok:false, err:'invalid', value:val };
+          return { ok:true, value:val };
+        },
+        egn(v) {
+          const digits = (v||'').replace(/\D/g,'');
+          if (!digits) return { ok:false, err:'empty', value:'' };
+          if (digits.length !== 10) return { ok:false, err:'wrongLength', value:digits };
+          const year = Number(digits.slice(0,2));
+          let month = Number(digits.slice(2,4));
+          const day = Number(digits.slice(4,6));
+          let century = 1900;
+          if (month > 40) { month -= 40; century = 2000; }
+          else if (month > 20) { month -= 20; century = 1800; }
+          const fullYear = century + year;
+          const date = new Date(fullYear, month - 1, day);
+          if (month < 1 || month > 12 || day < 1 || day > 31 || date.getDate() !== day || date.getMonth()+1 !== month) {
+            return { ok:false, err:'invalidDate', value:digits };
+          }
+          const weights = [2,4,8,5,10,9,7,3,6];
+          let sum = 0;
+          for (let i=0;i<9;i++) sum += Number(digits[i]) * weights[i];
+          const checksum = sum % 11 === 10 ? 0 : sum % 11;
+          if (checksum !== Number(digits[9])) return { ok:false, err:'invalidChecksum', value:digits };
+          return { ok:true, value:digits };
+        },
+        eik(v) {
+          const digits = (v||'').replace(/\D/g,'');
+          if (!digits) return { ok:false, err:'empty', value:'' };
+          if (!/^\d{9}$|^\d{13}$/.test(digits)) return { ok:false, err:'invalid', value:digits };
+          if (digits.length === 9) {
+            const w1 = [1,2,3,4,5,6,7,8];
+            let sum = 0;
+            for (let i=0;i<8;i++) sum += Number(digits[i]) * w1[i];
+            let c = sum % 11;
+            if (c === 10) {
+              const w2 = [3,4,5,6,7,8,9,10];
+              sum = 0;
+              for (let i=0;i<8;i++) sum += Number(digits[i]) * w2[i];
+              c = sum % 11;
+            }
+            if (c === 10) c = 0;
+            if (c !== Number(digits[8])) return { ok:false, err:'invalidChecksum', value:digits };
+          }
+          return { ok:true, value:digits };
+        },
+        vat(v) {
+          if (!v) return { ok:true, value:'' };
+          const cleaned = v.replace(/\s/g,'').toUpperCase();
+          const normalized = cleaned.startsWith('BG') ? cleaned : `BG${cleaned}`;
+          if (!/^BG\d{9,10}$/.test(normalized)) return { ok:false, err:'invalid', value:normalized };
+          const num = normalized.slice(2);
+          if (num.length === 10) {
+            const res = validatorsInv.egn(num);
+            if (!res.ok) return { ok:false, err:'invalid', value:normalized };
+          } else if (num.length === 9) {
+            const res = validatorsInv.eik(num);
+            if (!res.ok) return { ok:false, err:'invalid', value:normalized };
+          }
+          return { ok:true, value:normalized };
+        },
+        address(v) {
+          const val = normSpaces(v);
+          if (!val) return { ok:false, err:'empty', value:'' };
+          if (val.length < 10 || !/[0-9]/.test(val) || !/(ул\.|бул\.|пл\.|str|street|bul)/i.test(val)) {
+            return { ok:false, err:'invalid', value:val };
+          }
+          return { ok:true, value:val };
+        },
+        email(v) {
+          const val = normSpaces(v).toLowerCase();
+          if (!val) return { ok:false, err:'empty', value:'' };
+          const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+          if (!re.test(val)) return { ok:false, err:'invalid', value:val };
+          return { ok:true, value:val };
+        },
+        bank(v) {
+          const val = normSpaces(v);
+          if (!val) return { ok:true, value:'' };
+          if (val.length < 3) return { ok:false, err:'invalid', value:val };
+          return { ok:true, value:val };
+        },
+        iban(v) {
+          let cleaned = (v||'').replace(/\s/g,'').toUpperCase();
+          if (!cleaned) return { ok:true, value:'' };
+          if (!cleaned.startsWith('BG')) cleaned = `BG${cleaned}`;
+          if (!/^BG\d{2}[A-Z]{4}\d{14}$/.test(cleaned)) return { ok:false, err:'invalid', value:cleaned };
+          const rearr = cleaned.slice(4) + cleaned.slice(0,4);
+          const toNum = rearr.split('').map(ch => {
+            const code = ch.charCodeAt(0);
+            return code >= 65 && code <= 90 ? String(code - 55) : ch;
+          }).join('');
+          let remainder = 0n;
+          for (const ch of toNum) {
+            remainder = (remainder * 10n + BigInt(ch)) % 97n;
+          }
+          if (remainder !== 1n) return { ok:false, err:'invalid', value:cleaned };
+          return { ok:true, value:cleaned };
+        },
+        bic(v) {
+          const val = (v||'').replace(/\s/g,'').toUpperCase();
+          if (!val) return { ok:true, value:'' };
+          if (!/^[A-Z]{4}BG[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(val)) return { ok:false, err:'invalid', value:val };
+          return { ok:true, value:val };
+        }
+      };
+
+      const fieldsInv = {
+        individual: {
+          name: $('#iNameInd'),
+          egn: $('#iEgn'),
+          addr: $('#iAddrInd'),
+          email: $('#iEmailInd')
+        },
+        company: {
+          name: $('#iNameCo'),
+          eik: $('#iNumCo'),
+          vat: $('#iVatCo'),
+          mol: $('#iMolCo'),
+          addr: $('#iAddrCo'),
+          email: $('#iEmailCo'),
+          bank: $('#iBankCo'),
+          iban: $('#iIbanCo'),
+          bic: $('#iBicCo')
+        }
+      };
+      const touchedInv = {
+        individual: { name:false, egn:false, addr:false, email:false },
+        company: { name:false, eik:false, vat:false, mol:false, addr:false, email:false, bank:false, iban:false, bic:false }
+      };
+
+      const runInvValidation = (type, key, showError=false) => {
+        const input = fieldsInv[type][key];
+        if (!input) return { ok:true };
+        let res;
+        switch (key) {
+          case 'name': res = type === 'individual' ? validatorsInv.fullName(input.value) : validatorsInv.companyName(input.value); break;
+          case 'egn': res = validatorsInv.egn(input.value); break;
+          case 'eik': res = validatorsInv.eik(input.value); break;
+          case 'vat': res = validatorsInv.vat(input.value); break;
+          case 'mol': res = validatorsInv.fullName(input.value); break;
+          case 'addr': res = validatorsInv.address(input.value); break;
+          case 'email': res = validatorsInv.email(input.value); break;
+          case 'bank': res = validatorsInv.bank(input.value); break;
+          case 'iban': res = validatorsInv.iban(input.value); break;
+          case 'bic': res = validatorsInv.bic(input.value); break;
+          default: res = { ok:true, value:input.value };
+        }
+        const msgMap = errorMessagesInv[key] || {};
+        const message = res.ok ? '' : (msgMap[res.err] || msgMap.invalid || msgMap.empty);
+        setFieldState(input, { ...res, message }, showError);
+        return res;
+      };
+
+      const validateInvoice = (showErrors=false) => {
+        const type = invState.type === 'company' ? 'company' : 'individual';
+        const values = {};
+        let ok = true;
+        if (type === 'individual') {
+          ['name','egn','addr','email'].forEach(k => {
+            const res = runInvValidation('individual', k, showErrors);
+            if (!res.ok) ok = false;
+            if (res.ok) values[k] = res.value;
+          });
+        } else {
+          ['name','eik','vat','mol','addr','email','bank','iban','bic'].forEach(k => {
+            const res = runInvValidation('company', k, showErrors);
+            if (!res.ok) ok = false;
+            if (res.ok) values[k] = res.value;
+          });
+          if (values.bank) {
+            if (!values.iban) { ok = false; if (showErrors) setFieldState(fieldsInv.company.iban, { ok:false, message:errorMessagesInv.bankDeps.missingIban }); }
+            if (!values.bic) { ok = false; if (showErrors) setFieldState(fieldsInv.company.bic, { ok:false, message:errorMessagesInv.bankDeps.missingBic }); }
+          }
+        }
+        if (!ok && showErrors) scrollToError();
+        return { ok, values };
+      };
+
+      const collectErrorMessages = () => {
+        const type = invState.type === 'company' ? 'company' : 'individual';
+        const keys = type === 'individual'
+          ? ['name','egn','addr','email']
+          : ['name','eik','vat','mol','addr','email','bank','iban','bic'];
+        const errors = [];
+        keys.forEach(k => {
+          const res = runInvValidation(type, k, false);
+          if (!res.ok) {
+            const map = errorMessagesInv[k] || {};
+            const msg = map[res.err] || map.invalid || map.empty;
+            if (msg) errors.push(msg);
+          }
+        });
+        if (type === 'company') {
+          const bankVal = (fieldsInv.company.bank?.value || '').trim();
+          const ibanVal = (fieldsInv.company.iban?.value || '').trim();
+          const bicVal = (fieldsInv.company.bic?.value || '').trim();
+          if (bankVal) {
+            if (!ibanVal) errors.push(errorMessagesInv.bankDeps.missingIban);
+            if (!bicVal) errors.push(errorMessagesInv.bankDeps.missingBic);
+          }
+        }
+        return errors;
+      };
+
+      const bindInvField = (type, key) => {
+        const input = fieldsInv[type][key];
+        if (!input) return;
+        input.addEventListener('blur', () => {
+          touchedInv[type][key] = true;
+          runInvValidation(type, key, true);
+          updateConfirmBtn();
+        });
+        input.addEventListener('input', () => {
+          runInvValidation(type, key, touchedInv[type][key]);
+          updateConfirmBtn();
+        });
+      };
+
+      const updateConfirmBtn = () => {
+        const res = validateInvoice(false);
+        const btn = $('#confirm');
+        if (btn) {
+          btn.disabled = !res.ok;
+          const errors = collectErrorMessages();
+          if (!res.ok && errors.length) btn.title = errors.join('\n');
+          else btn.removeAttribute('title');
+        }
+      };
+
+      Object.keys(fieldsInv.individual).forEach(k => bindInvField('individual', k));
+      Object.keys(fieldsInv.company).forEach(k => bindInvField('company', k));
+
       $$('input[name="invType"]').forEach(r => r.onchange = () => {
         invState.type = r.value;
         $('#invIndividual').style.display = r.value === 'company' ? 'none' : 'grid';
         $('#invCompany').style.display = r.value === 'company' ? 'grid' : 'none';
+        updateConfirmBtn();
       });
       $('#back2')?.addEventListener('click', () => gotoStep(2));
+      $('#confirm')?.setAttribute('disabled','disabled');
       $('#confirm')?.addEventListener('click', async () => {
-        if (!validateStep3()) return;
+        const res = validateInvoice(true);
+        if (!res.ok) return;
         if (invState.type === 'company') {
           draft.invoice = {
             type: 'company',
-            name: $('#iNameCo').value,
-            num: $('#iNumCo').value,
-            vat: $('#iVatCo').value,
-            mol: $('#iMolCo').value,
-            addr: $('#iAddrCo').value,
-            email: $('#iEmailCo').value,
-            bank: $('#iBankCo').value,
-            iban: $('#iIbanCo').value,
-            bic: $('#iBicCo').value
+            name: res.values.name,
+            num: res.values.eik,
+            vat: res.values.vat || '',
+            mol: res.values.mol,
+            addr: res.values.addr,
+            email: res.values.email,
+            bank: res.values.bank || '',
+            iban: res.values.iban || '',
+            bic: res.values.bic || ''
           };
         } else {
           draft.invoice = {
             type: 'individual',
-            name: $('#iNameInd').value,
-            egn: $('#iEgn').value,
-            addr: $('#iAddrInd').value,
-            email: $('#iEmailInd').value,
+            name: res.values.name,
+            egn: res.values.egn,
+            addr: res.values.addr,
+            email: res.values.email,
             num: null, vat: null, mol: null, bank: null, iban: null, bic: null
           };
         }
@@ -1375,6 +1813,7 @@
           gotoStep(4, { id: draft.id });
         }
       });
+      updateConfirmBtn();
     }
   }
 
@@ -1851,14 +2290,17 @@
             <div><div class="section-title">Име</div><input id="pName" class="input" value="${param?.name || ''}"></div>
             <div><div class="section-title">Тип</div>
               <select id="pType" class="select">
+                <option value="" ${param?.type ? '' : 'selected'} disabled>Изберете тип</option>
                 <option value="ENUM" ${param?.type==='ENUM'?'selected':''}>опции</option>
                 <option value="NUMBER" ${param?.type==='NUMBER'?'selected':''}>число</option>
                 <option value="TEXT" ${param?.type==='TEXT'?'selected':''}>текст</option>
               </select>
             </div>
           </div>
-          <div class="section-title" id="optsLabel">${param?.type==='ENUM'?'Опции (разделени със ,)':'Мерна единица (за number)'}</div>
-          <textarea id="pOptions" class="textarea" placeholder="например: Лека кола, Джип, Товарен бус">${optsText || ''}</textarea>
+          <div id="optsWrap">
+            <div class="section-title" id="optsLabel">${param?.type==='ENUM'?'Опции (разделени със ,)':'Мерна единица (за number)'}</div>
+            <textarea id="pOptions" class="textarea" placeholder="">${optsText || ''}</textarea>
+          </div>
           <div id="err" style="color:#b42318;font-size:13px;"></div>
         </div>
         <div class="modal-actions">
@@ -1867,7 +2309,23 @@
         </div>
       `;
       showModal(html, (wrap, close) => {
-        const setOptsLabel = () => { $('#optsLabel', wrap).textContent = $('#pType', wrap).value === 'ENUM' ? 'Опции (разделени със ,)' : 'Мерна единица (за number)'; };
+        const optsWrap = $('#optsWrap', wrap);
+        const optsArea = $('#pOptions', wrap);
+        const setOptsLabel = () => {
+          const type = $('#pType', wrap).value;
+          if (type === 'ENUM') {
+            $('#optsLabel', wrap).textContent = 'Опции (разделени със ,)';
+            optsArea.placeholder = 'например: Лека кола, Джип, Товарен бус';
+            optsWrap.style.display = 'block';
+          } else if (type === 'NUMBER') {
+            $('#optsLabel', wrap).textContent = 'Мерна единица (за number)';
+            optsArea.placeholder = 'например: к.с., kWh, кг';
+            optsWrap.style.display = 'block';
+          } else {
+            optsWrap.style.display = 'none';
+            optsArea.value = '';
+          }
+        };
         $('#pType', wrap).onchange = setOptsLabel; setOptsLabel();
         $('#cancel', wrap).onclick = close;
         $('#save', wrap).onclick = async () => {
@@ -1876,7 +2334,12 @@
             type: $('#pType', wrap).value,
           };
           const raw = $('#pOptions', wrap).value.trim();
-          if (payload.type === 'ENUM') payload.options = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+          if (!payload.name) { $('#err', wrap).textContent = 'Името е задължително'; return; }
+          if (!payload.type) { $('#err', wrap).textContent = 'Изберете тип'; return; }
+          if (payload.type === 'ENUM') {
+            payload.options = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+            if (!payload.options.length) { $('#err', wrap).textContent = 'Добавете поне една опция'; return; }
+          }
           if (payload.type === 'NUMBER') payload.unit = raw || null;
           try {
             if (isEdit) await apiFetch(`/api/params/${param.id}`, { method: 'PUT', body: JSON.stringify(payload) });
@@ -2000,7 +2463,7 @@
         catch {}
       });
       $$('tr[data-res]').forEach(row => row.onclick = (e) => {
-        if (e.target.closest('select') || e.target.closest('button')) return;
+        if (e.target.closest('select') || e.target.closest('button') || e.target.closest('a')) return;
         const id = row.getAttribute('data-res');
         openReservationModal(id);
       });
@@ -2097,7 +2560,17 @@
       <div class="panel" style="padding:16px; margin-bottom:12px;">
         <div class="header" style="padding:0 0 12px 0; border:0;"><h2>Списък фактури/проформи</h2></div>
         <table class="table">
-          <thead><tr><th>Номер</th><th>Тип</th><th>Дата</th><th>Резервация</th><th></th></tr></thead>
+          <thead>
+            <tr><th>Номер</th><th>Тип</th><th>Дата</th><th>Получател</th><th>Резервация</th><th></th></tr>
+            <tr>
+              <th><div class="ta-wrap"><input id="fInvNum" class="input" placeholder="Филтър"/></div></th>
+              <th><div class="ta-wrap"><input id="fInvType" class="input" placeholder="Фактура/Проформа"/></div></th>
+              <th><div class="ta-wrap"><input id="fInvDate" class="input" placeholder="ГГГГ-ММ-ДД" type="date"/></div></th>
+              <th><div class="ta-wrap"><input id="fInvBuyer" class="input" placeholder="Получател"/></div></th>
+              <th><div class="ta-wrap"><input id="fInvRes" class="input" placeholder="Резервация"/></div></th>
+              <th></th>
+            </tr>
+          </thead>
           <tbody id="invList"></tbody>
         </table>
       </div>
@@ -2117,42 +2590,83 @@
           apiFetch('/api/reservations').catch(() => [])
         ]);
         const resMap = new Map((resList||[]).map(r => [String(r.id), r]));
-        $('#invList').innerHTML = (list||[]).map(inv => {
+        const viewList = (list||[]).map(inv => {
           const dt = inv.issueDate ? fmtDate(inv.issueDate) : '';
+          const dateIso = inv.issueDate ? inv.issueDate.slice(0,10) : '';
           const t = (inv.type || '').toString().toUpperCase();
           const typeLabel = t.includes('INV') ? 'Фактура' : 'Проформа';
           const resObj = resMap.get(String(inv.reservationId));
           const resLabel = resObj?.seq ?? resObj?.id ?? inv.reservationId ?? '';
-          const resLink = resLabel ? `<a class="link" href="#/admin/reservations" data-reslink="${inv.reservationId}">${resLabel}</a>` : '';
-          return `<tr>
-            <td><a class="link" data-open-inv="${inv.id || ''}" href="javascript:void(0);">${inv.number || '—'}</a></td>
-            <td>${typeLabel}</td>
-            <td>${dt}</td>
-            <td>${resLink}</td>
-            <td><button class="btn-secondary" data-open="${inv.reservationId}" style="height:32px;">Отвори</button></td>
-          </tr>`;
-        }).join('') || '<tr><td colspan="5">Няма фактури.</td></tr>';
-        $$('[data-open]').forEach(b => b.onclick = () => {
-          const rid = b.getAttribute('data-open');
-          if (rid) navigate(`#/admin/reservations?id=${rid}`);
+          const buyerName = inv.buyerName || resObj?.invoiceName || resObj?.driverName || '';
+          return { ...inv, _dt: dt, _dateIso: dateIso, _typeLabel: typeLabel, _resLabel: resLabel, _buyerName: buyerName };
         });
-        $$('[data-reslink]').forEach(a => a.onclick = (e) => {
-          e.preventDefault();
-          const rid = a.getAttribute('data-reslink');
-          if (rid) navigate(`#/admin/reservations?id=${rid}`);
-        });
-        $$('[data-open-inv]').forEach(a => a.onclick = async (e) => {
-          e.preventDefault();
-          const invId = a.getAttribute('data-open-inv');
-          if (!invId) return;
-          try {
-            const inv = (list||[]).find(x => String(x.id) === String(invId));
-            const resIdForModal = inv?.reservationId;
-            await loadInvoiceView(resIdForModal, true);
-          } catch {}
-        });
+
+        const filters = { num:'', type:'', date:'', buyer:'', res:'' };
+        const optNum = Array.from(new Set(viewList.map(i => i.number || '').filter(Boolean)));
+        const optType = ['Фактура','Проформа'];
+        const optDate = Array.from(new Set(viewList.map(i => i._dateIso).filter(Boolean)));
+        const optBuyer = Array.from(new Set(viewList.map(i => i._buyerName || '').filter(Boolean)));
+        const optRes = Array.from(new Set(viewList.map(i => i._resLabel || '').filter(Boolean)));
+
+        const pass = (inv) => {
+          if (filters.num && !(inv.number || '').toLowerCase().includes(filters.num.toLowerCase())) return false;
+          if (filters.type && !(inv._typeLabel || '').toLowerCase().includes(filters.type.toLowerCase())) return false;
+          if (filters.date && !(inv._dateIso || '').includes(filters.date)) return false;
+          if (filters.buyer && !(inv._buyerName || '').toLowerCase().includes(filters.buyer.toLowerCase())) return false;
+          if (filters.res && !(inv._resLabel || '').toString().toLowerCase().includes(filters.res.toLowerCase())) return false;
+          return true;
+        };
+
+        const renderRows = () => {
+          const rows = viewList.filter(pass).map(inv => {
+            const resLink = inv._resLabel ? `<a class="link" href="#/admin/reservations" data-reslink="${inv.reservationId}">${inv._resLabel}</a>` : '';
+            return `<tr>
+              <td><a class="link" data-open-inv="${inv.id || ''}" href="javascript:void(0);">${inv.number || '—'}</a></td>
+              <td>${inv._typeLabel}</td>
+              <td>${inv._dt}</td>
+              <td>${inv._buyerName || ''}</td>
+              <td>${resLink}</td>
+              <td><button class="btn-secondary" data-open="${inv.reservationId}" style="height:32px;">Отвори</button></td>
+            </tr>`;
+          }).join('') || '<tr><td colspan="6">Няма фактури.</td></tr>';
+          $('#invList').innerHTML = rows;
+          $$('[data-open]').forEach(b => b.onclick = () => {
+            const rid = b.getAttribute('data-open');
+            if (rid) navigate(`#/admin/reservations?id=${rid}`);
+          });
+          $$('[data-reslink]').forEach(a => a.onclick = async (e) => {
+            e.preventDefault();
+            const rid = a.getAttribute('data-reslink');
+            if (rid) await loadInvoiceView(rid, true);
+          });
+          $$('[data-open-inv]').forEach(a => a.onclick = async (e) => {
+            e.preventDefault();
+            const invId = a.getAttribute('data-open-inv');
+            if (!invId) return;
+            try {
+              const inv = (list||[]).find(x => String(x.id) === String(invId));
+              const resIdForModal = inv?.reservationId;
+              await loadInvoiceView(resIdForModal, true);
+            } catch {}
+          });
+        };
+
+        const bindFilter = (id, key, options=[]) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          attachTypeahead(el, options);
+          el.addEventListener('input', () => { filters[key] = el.value; renderRows(); });
+          el.addEventListener('change', () => { filters[key] = el.value; renderRows(); });
+        };
+        bindFilter('fInvNum','num', optNum);
+        bindFilter('fInvType','type', optType);
+        bindFilter('fInvDate','date', optDate);
+        bindFilter('fInvBuyer','buyer', optBuyer);
+        bindFilter('fInvRes','res', optRes);
+
+        renderRows();
       } catch {
-        $('#invList').innerHTML = '<tr><td colspan="5">Неуспешно зареждане на фактурите.</td></tr>';
+        $('#invList').innerHTML = '<tr><td colspan="6">Неуспешно зареждане на фактурите.</td></tr>';
       }
     })();
     if (resId) {
@@ -2162,7 +2676,7 @@
 
     async function loadInvoiceView(reservationId, asModal = false) {
       const host = $('#invEditor');
-      if (!asModal) host.innerHTML = '<div>Зареждане...</div>';
+      if (!asModal && host) host.innerHTML = '<div>Зареждане...</div>';
       let reservation = null;
       let invoice = null;
       await loadCompanyCache();
@@ -2231,80 +2745,129 @@
         notes: invoice?.notes || '',
         items
       };
+      const fmtMoney = (v) => `€${Number(v || 0).toFixed(2)}`;
+      const fmtDateShort = (d) => {
+        if (!d) return '';
+        const dt = new Date(d);
+        if (isNaN(dt)) return d;
+        return `${String(dt.getDate()).padStart(2,'0')}.${String(dt.getMonth()+1).padStart(2,'0')}.${dt.getFullYear()}`;
+      };
       const rows = items.map(it => `
         <tr>
-          <td>${it.description}</td>
-          <td style="text-align:right;">${it.qty}</td>
-          <td style="text-align:right;">€${it.unitPrice.toFixed(2)}</td>
-          <td style="text-align:right;">${it.vatRate}%</td>
-          <td style="text-align:right;">€${it.totalNet.toFixed(2)}</td>
-          <td style="text-align:right;">€${it.totalVat.toFixed(2)}</td>
-          <td style="text-align:right;">€${it.totalGross.toFixed(2)}</td>
+          <td>
+            <div class="desc">${it.description}</div>
+            <div class="meta">${reservation.from ? fmtDate(reservation.from) : ''}${reservation.to ? ' → ' + fmtDate(reservation.to) : ''}</div>
+          </td>
+          <td class="center">${it.qty}</td>
+          <td class="num">${fmtMoney(it.unitPrice)}</td>
+          <td class="center">${it.vatRate}%</td>
+          <td class="num">${fmtMoney(it.totalNet)}</td>
+          <td class="num">${fmtMoney(it.totalVat)}</td>
+          <td class="num">${fmtMoney(it.totalGross)}</td>
         </tr>
       `).join('');
       const html = `
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <div class="invoice-shell">
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:-8px;">
+            <button class="btn-secondary" id="editInvView" style="height:34px; display:flex; align-items:center; gap:6px; padding:0 12px;">✏️ Редактирай</button>
+            <button class="btn-secondary" id="printInvView" style="height:34px; display:flex; align-items:center; gap:6px; padding:0 12px;">🖨️ Принтирай / PDF</button>
+          </div>
+          <div class="invoice-grid-header">
+            <div class="invoice-brand">
+              <div class="invoice-logo" aria-label="logo">🚗</div>
+              <div>
+                <div style="font-weight:700; font-size:16px;">${sup.name || 'Company'}</div>
+                <div style="color:#6B7280; font-size:12px;">${sup.email || ''}</div>
+              </div>
+            </div>
+            <div class="invoice-title">${payload.type==='INVOICE'?'ФАКТУРА':'ПРОФОРМА'}</div>
+            <div class="invoice-meta">
+              <div><span class="label">Номер</span><br><span class="value">${payload.number || '(генерира се)'}</span></div>
+              <div style="margin-top:6px;"><span class="label">Дата</span><br><span class="value">${fmtDateShort(payload.issueDate)}</span></div>
+              ${payload.dueDate ? `<div style="margin-top:6px;"><span class="label">Валиден до</span><br><span class="value">${fmtDateShort(payload.dueDate)}</span></div>` : ''}
+              <div style="margin-top:6px;"><span class="label">Валута</span><br><span class="value">${payload.currency}</span></div>
+            </div>
+          </div>
+
+          <div class="invoice-reason">ℹ️ Основание: Наем на автомобил. Цените са с ДДС 20%.</div>
+
+          <div class="invoice-parties">
+            <div class="party-card">
+              <h4>Доставчик</h4>
+              <div class="name">${sup.name}</div>
+              <div class="party-row"><span class="icon">🆔</span><span>ЕИК: ${sup.eik || '—'} ${sup.vat ? ' | ДДС №: '+sup.vat : ''}</span></div>
+              <div class="party-row"><span class="icon">👤</span><span>МОЛ: ${sup.mol || '—'}</span></div>
+              <div class="party-row"><span class="icon">📍</span><span>${sup.addr || '—'}</span></div>
+              <div class="party-row"><span class="icon">✉️</span><span>${sup.email || '—'}</span></div>
+              <div class="party-row"><span class="icon">📞</span><span>${sup.phone || '—'}</span></div>
+              <div class="party-row"><span class="icon">🏦</span><span>${sup.bank || '—'}</span></div>
+              <div class="party-row"><span class="icon">💳</span><span>IBAN: ${sup.iban || '—'} | BIC: ${sup.bic || '—'}</span></div>
+            </div>
+            <div class="party-card">
+              <h4>Получател</h4>
+              <div class="name">${payload.buyerName || ''}</div>
+              <div class="party-row"><span class="icon">🆔</span><span>${payload.buyerType==='company'
+                ? `ЕИК: ${payload.buyerEik || '—'} ${payload.buyerVat ? ' | ДДС №: '+payload.buyerVat : ''}`
+                : `ЕГН: ${payload.buyerEgn || '—'}`}</span></div>
+              ${payload.buyerMol ? `<div class="party-row"><span class="icon">👤</span><span>МОЛ: ${payload.buyerMol}</span></div>` : ''}
+              <div class="party-row"><span class="icon">📍</span><span>${payload.buyerAddr || '—'}</span></div>
+              <div class="party-row"><span class="icon">✉️</span><span>${payload.buyerEmail || '—'}</span></div>
+              ${(payload.buyerBank || payload.buyerIban || payload.buyerBic) ? `
+                <div class="party-row"><span class="icon">🏦</span><span>${payload.buyerBank || '—'}</span></div>
+                <div class="party-row"><span class="icon">💳</span><span>IBAN: ${payload.buyerIban || '—'} | BIC: ${payload.buyerBic || '—'}</span></div>
+              ` : ''}
+            </div>
+          </div>
+
           <div>
-            <div class="section-title">${payload.type==='INVOICE'?'Фактура':'Проформа'}</div>
-            <div style="color:#556;">Номер: ${payload.number || '(генерира се)'} | Дата: ${payload.issueDate || ''} ${payload.dueDate ? ' | Падеж: '+payload.dueDate : ''} | Валута: ${payload.currency}</div>
-            <div style="color:#556;">Основание: Наем на автомобил. Цените са с ДДС 20%.</div>
+            <table class="invoice-table">
+              <thead>
+                <tr>
+                  <th style="width:40%;">Описание</th>
+                  <th class="center" style="width:8%;">Кол-во</th>
+                  <th class="num" style="width:12%;">Ед. цена</th>
+                  <th class="center" style="width:8%;">ДДС %</th>
+                  <th class="num" style="width:12%;">Сума без ДДС</th>
+                  <th class="num" style="width:10%;">ДДС</th>
+                  <th class="num" style="width:10%;">Сума с ДДС</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
           </div>
-          <div class="row" style="gap:6px;">
-            <button class="btn-secondary" id="editInv" style="height:34px;">Редактирай</button>
-            <button class="btn-primary" id="printInvView" style="height:34px;">Печат</button>
+
+          <div class="invoice-totals">
+            <div class="row"><span>Междинна сума</span><span class="num">${fmtMoney(totals.subtotal)}</span></div>
+            <div class="row" style="padding-bottom:8px; border-bottom:1px solid #D1D5DB;"><span>ДДС (20%)</span><span class="num">${fmtMoney(totals.vatAmount)}</span></div>
+            <div class="invoice-total-final"><span>Общо</span><span class="amount">${fmtMoney(totals.total)}</span></div>
           </div>
-        </div>
-        <div class="grid-2" style="gap:16px; margin-top:12px;">
-          <div class="panel" style="padding:12px;">
-            <div class="section-title">Доставчик</div>
-            <div>${sup.name}</div>
-            <div>ЕИК: ${sup.eik} ${sup.vat ? ('ДДС №: '+sup.vat) : ''}</div>
-            <div>МОЛ: ${sup.mol || ''}</div>
-            <div>Адрес: ${sup.addr}</div>
-            <div>Имейл: ${sup.email || ''} Тел: ${sup.phone || ''}</div>
-            <div>Банка: ${sup.bank || ''} IBAN: ${sup.iban || ''} BIC: ${sup.bic || ''}</div>
-          </div>
-          <div class="panel" style="padding:12px;">
-            <div class="section-title">Получател</div>
-            <div>${payload.buyerName || ''}</div>
-            <div>${payload.buyerType==='company'
-              ? `ЕИК: ${payload.buyerEik || ''} ${payload.buyerVat ? ('ДДС №: '+payload.buyerVat) : ''}`
-              : `ЕГН: ${payload.buyerEgn || ''}`}</div>
-            <div>МОЛ: ${payload.buyerMol || ''}</div>
-            <div>Адрес: ${payload.buyerAddr || ''}</div>
-            <div>Имейл: ${payload.buyerEmail || ''}</div>
-            <div>Банка: ${payload.buyerBank || ''} IBAN: ${payload.buyerIban || ''} BIC: ${payload.buyerBic || ''}</div>
+
+          <div class="invoice-footer">
+            <span>Генерирана от системата на ${fmtDate(new Date().toISOString())}</span>
+            <span></span>
+            <span>${payload.paymentMethod ? 'Начин на плащане: '+payload.paymentMethod : ''} ${payload.paymentTerms ? 'Условия: '+payload.paymentTerms : ''}</span>
           </div>
         </div>
-        <div style="margin-top:12px;">
-          <table class="table">
-            <thead><tr><th>Описание</th><th>Кол-во</th><th>Ед. цена</th><th>ДДС %</th><th>Сума без ДДС</th><th>ДДС</th><th>Сума с ДДС</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-        <div style="margin-top:10px; text-align:right;">
-          <div>Междинна сума: €${totals.subtotal.toFixed(2)}</div>
-          <div>ДДС (20%): €${totals.vatAmount.toFixed(2)}</div>
-          <div><strong>Общо: €${totals.total.toFixed(2)}</strong></div>
-        </div>
-        ${payload.notes ? `<div style="margin-top:8px;color:#556;">Бележки: ${payload.notes}</div>` : ''}
-        <div style="margin-top:12px;color:#556;">Начин на плащане: ${payload.paymentMethod || ''} ${payload.paymentTerms ? ' / Условия: '+payload.paymentTerms : ''}</div>
       `;
       if (asModal) {
-        showModal(`<div style="max-width:960px;max-height:80vh;overflow:auto;">${html}</div>`);
+        showModal(`<div style="max-width:1100px;max-height:82vh;overflow:auto;">${html}</div>`, (wrap, close) => {
+          const printBtn = wrap.querySelector('#printInvView');
+          const editBtn = wrap.querySelector('#editInvView');
+          if (printBtn) printBtn.onclick = () => window.print();
+          if (editBtn) editBtn.onclick = () => { close(); openInvoiceEditorModal(reservationId); };
+        });
       } else {
-        host.innerHTML = html;
-        $('#editInv', host).onclick = () => {
-          const q = new URLSearchParams(location.hash.split('?')[1] || '');
-          q.set('edit','1');
-          location.hash = `#/admin/invoices?${q.toString()}`;
-        };
-        $('#printInvView', host).onclick = () => { window.print(); };
+        if (host) host.innerHTML = html;
+        const printBtn = host ? $('#printInvView', host) : null;
+        const editBtn = host ? $('#editInvView', host) : null;
+        if (printBtn) printBtn.onclick = () => { window.print(); };
+        if (editBtn) editBtn.onclick = () => openInvoiceEditorModal(reservationId);
       }
     }
 
-    async function loadInvoiceEditor(reservationId) {
-      const host = $('#invEditor');
+    async function loadInvoiceEditor(reservationId, hostEl = null) {
+      const host = hostEl || $('#invEditor');
+      if (!host) return;
       const loading = '<div>Зареждане...</div>';
       host.innerHTML = loading;
       let reservation = null;
@@ -2347,20 +2910,23 @@
         items: defaultItems
       };
       const totals = () => calcInvoiceTotals(state.items);
+      const locked = state.status === 'PAID' || state.status === 'CANCELLED';
       const setVal = (id, v) => { const el = host.querySelector(`#${id}`); if (el) el.value = v ?? ''; };
       const renderItems = () => {
         const box = host.querySelector('#invItems');
+        if (!box) return;
         box.innerHTML = state.items.map((it, idx) => `
           <div class="grid-4" data-row="${idx}" style="align-items:end; gap:8px; margin-bottom:6px;">
-            <div><div class="section-title">Описание</div><input data-field="description" class="input" value="${it.description || ''}"></div>
-            <div><div class="section-title">Кол-во</div><input data-field="qty" type="number" step="0.01" class="input" value="${it.qty}"></div>
-            <div><div class="section-title">Ед. цена</div><input data-field="unitPrice" type="number" step="0.01" class="input" value="${it.unitPrice}"></div>
-            <div><div class="section-title">ДДС %</div><input data-field="vatRate" type="number" step="1" class="input" value="${it.vatRate}"></div>
+            <div><div class="section-title">Описание</div><input data-field="description" class="input" ${locked?'disabled':''} value="${it.description || ''}"></div>
+            <div><div class="section-title">Кол-во</div><input data-field="qty" type="number" step="0.01" class="input" ${locked?'disabled':''} value="${it.qty}"></div>
+            <div><div class="section-title">Ед. цена</div><input data-field="unitPrice" type="number" step="0.01" class="input" ${locked?'disabled':''} value="${it.unitPrice}"></div>
+            <div><div class="section-title">ДДС %</div><input data-field="vatRate" type="number" step="1" class="input" ${locked?'disabled':''} value="${it.vatRate}"></div>
             <div style="display:flex;align-items:center;gap:6px;">
-              <button class="btn-secondary" data-del="${idx}" style="height:32px;">Изтрий</button>
+              ${locked ? '' : `<button class="btn-secondary" data-del="${idx}" type="button" style="height:32px;">Изтрий</button>`}
             </div>
           </div>
         `).join('') || '<div>Няма редове.</div>';
+        if (locked) return;
         $$('[data-field]', box).forEach(inp => inp.oninput = () => {
           const row = Number(inp.closest('[data-row]').getAttribute('data-row'));
           const field = inp.getAttribute('data-field');
@@ -2379,75 +2945,133 @@
       const refreshTotals = () => {
         const t = totals();
         const el = host.querySelector('#invTotals');
+        if (!el) return;
         el.innerHTML = `
           <div>Междинна сума: €${t.subtotal.toFixed(2)}</div>
           <div>ДДС (20%): €${t.vatAmount.toFixed(2)}</div>
           <div><strong>Общо: €${t.total.toFixed(2)}</strong></div>
         `;
       };
+      const badge = (st) => `<span class="pill pill-status-${st}">${st}</span>`;
       host.innerHTML = `
-        <div class="section-title" style="margin-bottom:8px;">Резервация №${reservation.seq || ''} • ${reservation.car?.brand||''} ${reservation.car?.model||''}</div>
-        <div class="grid-3" style="gap:12px;">
-          <div><div class="section-title">Тип документ</div><select id="invType" class="select">
-            <option value="PROFORMA" ${state.type==='PROFORMA'?'selected':''}>Проформа</option>
-            <option value="INVOICE" ${state.type==='INVOICE'?'selected':''}>Фактура</option>
-          </select></div>
-          <div><div class="section-title">Статус</div><select id="invStatus" class="select">
-            ${['DRAFT','ISSUED','PAID','CANCELLED'].map(s => `<option ${state.status===s?'selected':''} value="${s}">${s}</option>`).join('')}
-          </select></div>
-          <div><div class="section-title">Номер</div><input id="invNumber" class="input" placeholder="авто" value="${state.number || ''}"></div>
-        </div>
-        <div class="grid-3" style="gap:12px;">
-          <div><div class="section-title">Дата издаване</div><input id="invIssue" type="date" class="input" value="${state.issueDate}"></div>
-          <div><div class="section-title">Падеж</div><input id="invDue" type="date" class="input" value="${state.dueDate || ''}"></div>
-          <div><div class="section-title">Валута</div><input id="invCurrency" class="input" value="${state.currency}"></div>
-        </div>
-        <div class="grid-2" style="gap:12px;">
-          <div><div class="section-title">Начин на плащане</div><input id="invPay" class="input" value="${state.paymentMethod||''}"></div>
-          <div><div class="section-title">Условия</div><input id="invTerms" class="input" value="${state.paymentTerms||''}"></div>
-        </div>
-        <div class="section-title" style="margin-top:8px;">Клиент</div>
-        <div class="grid-3" style="gap:12px;">
-          <div><div class="section-title">Тип</div><select id="buyerType" class="select">
-            <option value="individual" ${state.buyerType==='individual'?'selected':''}>Физическо лице</option>
-            <option value="company" ${state.buyerType==='company'?'selected':''}>Юридическо лице</option>
-          </select></div>
-          <div><div class="section-title">Име / Фирма</div><input id="buyerName" class="input" value="${state.buyerName||''}"></div>
-          <div><div class="section-title">Имейл</div><input id="buyerEmail" class="input" value="${state.buyerEmail||''}"></div>
-        </div>
-        <div class="grid-3" style="gap:12px;">
-          <div><div class="section-title">ЕИК</div><input id="buyerEik" class="input" value="${state.buyerEik||''}"></div>
-          <div><div class="section-title">ДДС №</div><input id="buyerVat" class="input" value="${state.buyerVat||''}"></div>
-          <div><div class="section-title">ЕГН</div><input id="buyerEgn" class="input" value="${state.buyerEgn||''}"></div>
-        </div>
-        <div class="grid-3" style="gap:12px;">
-          <div><div class="section-title">МОЛ</div><input id="buyerMol" class="input" value="${state.buyerMol||''}"></div>
-          <div><div class="section-title">Банка</div><input id="buyerBank" class="input" value="${state.buyerBank||''}"></div>
-          <div><div class="section-title">IBAN / BIC</div>
-            <div class="row" style="gap:6px;">
-              <input id="buyerIban" class="input" style="flex:2;" value="${state.buyerIban||''}">
-              <input id="buyerBic" class="input" style="flex:1;" value="${state.buyerBic||''}">
+        <div class="section-card" style="background:linear-gradient(180deg,#F9FAFB, #FFFFFF); position:sticky; top:0; z-index:2; padding:16px 16px 12px 16px; margin:-14px -14px 8px -14px; border:0; border-bottom:2px solid #E5E7EB;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div>
+              <div class="section-title" style="margin:0;">Резервация №${reservation.seq || ''}</div>
+              <div style="color:#6B7280; font-size:13px;">${reservation.car?.brand||''} ${reservation.car?.model||''} • ${fmtRange(reservation.from, reservation.to)}</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              ${badge(state.status)}
             </div>
           </div>
         </div>
-        <div><div class="section-title">Адрес</div><input id="buyerAddr" class="input" value="${state.buyerAddr||''}"></div>
-        <div class="section-title" style="margin-top:8px;">Редове</div>
-        <div id="invItems"></div>
-        <div><button class="btn-secondary" id="addItem" type="button" style="height:34px;">Добави ред</button></div>
-        <div id="invTotals" style="display:grid;gap:4px;"></div>
-        <div class="section-title">Бележки</div>
-        <textarea id="invNotes" class="input" style="min-height:60px;">${state.notes||''}</textarea>
-        <div class="row" style="justify-content:flex-end; gap:8px; margin-top:8px;">
-          <button class="btn-secondary" id="printInv" type="button">Печат (Print to PDF)</button>
-          <button class="btn-primary" id="saveInv" type="button">Запази</button>
+
+        <div class="form-section">
+          <div class="section-card">
+            <div class="section-title">Документ</div>
+            <div class="grid-3" style="gap:12px;">
+              <div><div class="section-title">Тип документ</div><select id="invType" class="select" ${locked?'disabled':''}>
+                <option value="PROFORMA" ${state.type==='PROFORMA'?'selected':''}>Проформа</option>
+                <option value="INVOICE" ${state.type==='INVOICE'?'selected':''}>Фактура</option>
+              </select></div>
+              <div><div class="section-title">Статус</div><select id="invStatus" class="select">
+                ${['DRAFT','ISSUED','PAID','CANCELLED'].map(s => `<option ${state.status===s?'selected':''} value="${s}">${s}</option>`).join('')}
+              </select></div>
+              <div><div class="section-title">Номер</div><input id="invNumber" class="input" placeholder="авто" value="${state.number || ''}" ${locked?'disabled':''}></div>
+            </div>
+            <div class="grid-3" style="gap:12px; margin-top:10px;">
+              <div><div class="section-title">Дата издаване</div><input id="invIssue" type="date" class="input" value="${state.issueDate}" ${locked?'disabled':''}></div>
+              <div><div class="section-title">Падеж</div><input id="invDue" type="date" class="input" value="${state.dueDate || ''}" ${locked?'disabled':''}></div>
+              <div><div class="section-title">Валута</div><input id="invCurrency" class="input" value="${state.currency}" ${locked?'disabled':''}></div>
+            </div>
+            <div class="grid-2" style="gap:12px; margin-top:10px;">
+              <div><div class="section-title">Начин на плащане</div><input id="invPay" class="input" value="${state.paymentMethod||''}" ${locked?'disabled':''}></div>
+              <div><div class="section-title">Условия</div><input id="invTerms" class="input" value="${state.paymentTerms||''}" ${locked?'disabled':''}></div>
+            </div>
+          </div>
+
+          <div class="section-card">
+            <div class="section-title">Получател</div>
+            <div class="grid-3" style="gap:12px;">
+              <div><div class="section-title">Тип</div><select id="buyerType" class="select" ${locked?'disabled':''}>
+                <option value="individual" ${state.buyerType==='individual'?'selected':''}>Физическо лице</option>
+                <option value="company" ${state.buyerType==='company'?'selected':''}>Юридическо лице</option>
+              </select></div>
+              <div><div class="section-title">Име / Фирма</div><input id="buyerName" class="input" value="${state.buyerName||''}" ${locked?'disabled':''}></div>
+              <div><div class="section-title">Имейл</div><input id="buyerEmail" class="input" value="${state.buyerEmail||''}" ${locked?'disabled':''}></div>
+            </div>
+            <div class="grid-3" style="gap:12px; margin-top:10px;">
+              <div id="buyerEikWrap"><div class="section-title">ЕИК</div><input id="buyerEik" class="input" value="${state.buyerEik||''}" ${locked?'disabled':''}></div>
+              <div id="buyerVatWrap"><div class="section-title">ДДС №</div><input id="buyerVat" class="input" value="${state.buyerVat||''}" ${locked?'disabled':''}></div>
+              <div id="buyerEgnWrap"><div class="section-title">ЕГН</div><input id="buyerEgn" class="input" value="${state.buyerEgn||''}" ${locked?'disabled':''}></div>
+            </div>
+            <div class="grid-3" style="gap:12px; margin-top:10px;">
+              <div id="buyerMolWrap"><div class="section-title">МОЛ</div><input id="buyerMol" class="input" value="${state.buyerMol||''}" ${locked?'disabled':''}></div>
+              <div><div class="section-title">Банка</div><input id="buyerBank" class="input" value="${state.buyerBank||''}" ${locked?'disabled':''}></div>
+              <div><div class="section-title">IBAN / BIC</div>
+                <div class="row" style="gap:6px;">
+                  <input id="buyerIban" class="input" style="flex:2;" value="${state.buyerIban||''}" ${locked?'disabled':''}>
+                  <input id="buyerBic" class="input" style="flex:1;" value="${state.buyerBic||''}" ${locked?'disabled':''}>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:10px;"><div class="section-title">Адрес</div><input id="buyerAddr" class="input" value="${state.buyerAddr||''}" ${locked?'disabled':''}></div>
+          </div>
+
+          <div class="section-card">
+            <div class="row" style="justify-content:space-between; align-items:center;">
+              <div class="section-title">Редове</div>
+              ${locked ? '' : `<button class="btn-secondary" id="addItem" type="button" style="height:34px;">Добави ред</button>`}
+            </div>
+            <div id="invItems" style="margin-top:8px;"></div>
+          </div>
+
+          <div class="section-card">
+            <div class="section-title">Бележки</div>
+            <textarea id="invNotes" class="input" style="min-height:60px;" ${locked?'disabled':''}>${state.notes||''}</textarea>
+          </div>
+
+          <div class="section-card" id="invTotals" style="display:grid;gap:4px;"></div>
+          <div id="invErr" style="color:#B42318; font-size:13px; display:none;"></div>
+          <div class="sticky-actions">
+            <button class="btn-secondary" id="printInv" type="button">Печат (PDF)</button>
+            ${locked ? '' : `<button class="btn-primary" id="saveInv" type="button">Запази</button>`}
+          </div>
         </div>
       `;
       renderItems();
       refreshTotals();
-      $('#addItem', host).onclick = () => {
-        state.items.push({ description:'Услуга', qty:1, unitPrice:0, vatRate:20, totalNet:0, totalVat:0, totalGross:0 });
-        renderItems(); refreshTotals();
+      const toggleBuyerFields = () => {
+        const typeSel = host.querySelector('#buyerType');
+        const type = typeSel?.value || 'individual';
+        const isCompany = type === 'company';
+        const show = (id, visible) => { const el = host.querySelector(id); if (el) el.style.display = visible ? '' : 'none'; };
+        show('#buyerEikWrap', isCompany);
+        show('#buyerVatWrap', isCompany);
+        show('#buyerMolWrap', isCompany);
+        show('#buyerEgnWrap', !isCompany);
       };
+      toggleBuyerFields();
+      $('#buyerType', host)?.addEventListener('change', () => {
+        const typeSel = host.querySelector('#buyerType');
+        state.buyerType = typeSel?.value || 'individual';
+        if (state.buyerType === 'company') {
+          state.buyerEgn = '';
+          const egn = host.querySelector('#buyerEgn'); if (egn) egn.value = '';
+        } else {
+          state.buyerEik = ''; state.buyerVat = ''; state.buyerMol = '';
+          const eik = host.querySelector('#buyerEik'); if (eik) eik.value = '';
+          const vat = host.querySelector('#buyerVat'); if (vat) vat.value = '';
+          const mol = host.querySelector('#buyerMol'); if (mol) mol.value = '';
+        }
+        toggleBuyerFields();
+      });
+      if (!locked) {
+        $('#addItem', host)?.addEventListener('click', () => {
+          state.items.push({ description:'Услуга', qty:1, unitPrice:0, vatRate:20, totalNet:0, totalVat:0, totalGross:0 });
+          renderItems(); refreshTotals();
+        });
+      }
       const collect = () => {
         const val = id => (host.querySelector(`#${id}`)?.value || '').trim();
         return {
@@ -2476,8 +3100,52 @@
           items: state.items
         };
       };
-      $('#saveInv', host).onclick = async () => {
+
+      const clearFieldErrors = () => {
+        $$('.err-msg, .err-inline', host).forEach(n => n.remove());
+        $$('.error', host).forEach(n => n.classList.remove('error'));
+      };
+      const markFieldError = (sel, msg) => {
+        const el = typeof sel === 'string' ? host.querySelector(sel) : sel;
+        if (!el) return;
+        el.classList.add('error');
+        const holder = el.parentElement || el;
+        const span = document.createElement('span');
+        span.className = 'err-inline';
+        span.textContent = msg;
+        holder.appendChild(span);
+      };
+
+      const validateInvoicePayload = (p) => {
+        const emailRe = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        const eikRe = /^\d{9}$|^\d{13}$/;
+        const egnRe = /^\d{10}$/;
+        const vatRe = /^BG\d{9,10}$/;
+        const ibanRe = /^[A-Z]{2}[0-9A-Z]{10,32}$/;
+
+        if (!p.issueDate) return { field: '#invIssue', msg: 'Попълнете дата на издаване' };
+        if (!p.buyerName) return { field: '#buyerName', msg: 'Попълнете получател' };
+        if (!p.buyerEmail || !emailRe.test(p.buyerEmail)) return { field: '#buyerEmail', msg: 'Попълнете валиден имейл' };
+        if (p.buyerType === 'company') {
+          if (!p.buyerEik || !eikRe.test(p.buyerEik)) return { field: '#buyerEik', msg: 'Попълнете валиден ЕИК (9 или 13 цифри)' };
+          if (p.buyerVat && !vatRe.test(p.buyerVat.toUpperCase().replace(/\s/g,''))) return { field: '#buyerVat', msg: 'Невалиден ДДС № (BG + 9/10 цифри)' };
+        } else {
+          if (!p.buyerEgn || !egnRe.test(p.buyerEgn)) return { field: '#buyerEgn', msg: 'Попълнете валидно ЕГН (10 цифри)' };
+        }
+        if (p.buyerBank && !p.buyerIban) return { field: '#buyerIban', msg: 'IBAN е задължителен при попълнена банка' };
+        if (p.buyerIban && !ibanRe.test(p.buyerIban.toUpperCase().replace(/\s/g,''))) return { field: '#buyerIban', msg: 'Невалиден IBAN' };
+        if (!Array.isArray(p.items) || !p.items.length) return { field: '#invItems', msg: 'Добавете поне един ред' };
+        const bad = p.items.find(it => !it.description || Number(it.qty) <= 0 || Number(it.unitPrice) < 0);
+        if (bad) return { field: '#invItems', msg: 'Всеки ред трябва да има описание и количество > 0' };
+        return null;
+      };
+      $('#saveInv', host)?.addEventListener('click', async () => {
         const payload = collect();
+        clearFieldErrors();
+        const err = validateInvoicePayload(payload);
+        if (err) { markFieldError(err.field, err.msg); return; }
+        const btn = $('#saveInv', host);
+        if (btn) btn.disabled = true;
         try {
           const url = payload.id ? `/api/invoices/${payload.id}` : '/api/invoices';
           const method = payload.id ? 'PUT' : 'POST';
@@ -2487,97 +3155,20 @@
           state.status = saved.status || state.status;
           state.items = normalizeInvoiceItems(payload.items);
           renderItems(); refreshTotals();
-          alert('Записано.');
         } catch (e) {
-          alert('Грешка при запис: ' + (e.message || ''));
+          markFieldError('#saveInv', 'Грешка при запис: ' + (e.message || ''));
+        } finally {
+          if (btn) btn.disabled = false;
         }
-      };
-      $('#printInv', host).onclick = () => {
-        const payload = collect();
-        const t = calcInvoiceTotals(state.items);
-        const supplier = {
-          name: invoice?.supplierName || companyCache?.name || '',
-          eik: invoice?.supplierEik || companyCache?.eik || '',
-          vat: invoice?.supplierVat || companyCache?.vat || '',
-          mol: invoice?.supplierMol || companyCache?.mol || '',
-          addr: invoice?.supplierAddr || companyCache?.address || '',
-          email: invoice?.supplierEmail || companyCache?.email || '',
-          phone: invoice?.supplierPhone || companyCache?.phone || '',
-          bank: invoice?.supplierBank || companyCache?.bank || '',
-          iban: invoice?.supplierIban || companyCache?.iban || '',
-          bic: invoice?.supplierBic || companyCache?.bic || ''
-        };
-        const win = window.open('', '_blank');
-        const rows = state.items.map(it => `
-          <tr>
-            <td>${it.description}</td>
-            <td style="text-align:right;">${it.qty}</td>
-            <td style="text-align:right;">€${it.unitPrice.toFixed(2)}</td>
-            <td style="text-align:right;">${it.vatRate}%</td>
-            <td style="text-align:right;">€${it.totalNet.toFixed(2)}</td>
-            <td style="text-align:right;">€${it.totalVat.toFixed(2)}</td>
-            <td style="text-align:right;">€${it.totalGross.toFixed(2)}</td>
-          </tr>
-        `).join('');
-        win.document.write(`
-          <html><head><title>${payload.type==='INVOICE'?'Фактура':'Проформа'}</title>
-            <style>
-              body{font-family:Inter,Arial,sans-serif;padding:24px;font-size:13px;color:#1f2933;}
-              table{width:100%;border-collapse:collapse;margin-top:12px;}
-              td,th{border:1px solid #ccc;padding:6px;font-size:12px;}
-              .grid{display:flex;gap:24px;}
-              .muted{color:#666;font-size:12px;}
-              .totals{margin-top:12px;text-align:right;}
-              .badge{display:inline-block;padding:2px 8px;border-radius:6px;background:#eef2ff;font-size:12px;}
-              h2{margin:0 0 6px 0;}
-            </style>
-          </head><body>
-            <h2>${payload.type==='INVOICE'?'Фактура':'Проформа'}</h2>
-            <div class="muted">
-              Номер: ${payload.number || '(генерира се при запис)'} |
-              Дата: ${payload.issueDate || ''} ${payload.dueDate ? ' | Падеж: '+payload.dueDate : ''} |
-              Валута: ${payload.currency || 'EUR'}
-            </div>
-            <div class="muted">Основание: Наем на автомобил. Цените са с ДДС 20%.</div>
-            <div class="grid" style="margin-top:12px;">
-              <div style="flex:1;">
-                <strong>Доставчик</strong><br>
-                ${supplier.name}<br>
-                ЕИК: ${supplier.eik} ${supplier.vat ? ('ДДС №: '+supplier.vat) : ''}<br>
-                МОЛ: ${supplier.mol || ''}<br>
-                Адрес: ${supplier.addr}<br>
-                Имейл: ${supplier.email || ''} Тел: ${supplier.phone || ''}<br>
-                Банка: ${supplier.bank || ''} IBAN: ${supplier.iban || ''} BIC: ${supplier.bic || ''}
-              </div>
-              <div style="flex:1;">
-                <strong>Получател</strong><br>
-                ${payload.buyerName || ''}<br>
-                ${payload.buyerType==='company'
-                  ? `ЕИК: ${payload.buyerEik || ''} ${payload.buyerVat ? ('ДДС №: '+payload.buyerVat) : ''}`
-                  : `ЕГН: ${payload.buyerEgn || ''}`}<br>
-                МОЛ: ${payload.buyerMol || ''}<br>
-                Адрес: ${payload.buyerAddr || ''}<br>
-                Имейл: ${payload.buyerEmail || ''}<br>
-                Банка: ${payload.buyerBank || ''} IBAN: ${payload.buyerIban || ''} BIC: ${payload.buyerBic || ''}
-              </div>
-            </div>
-            <table>
-              <thead><tr><th>Описание</th><th>Кол-во</th><th>Ед. цена</th><th>ДДС %</th><th>Сума без ДДС</th><th>ДДС</th><th>Сума с ДДС</th></tr></thead>
-              <tbody>${rows}</tbody>
-            </table>
-            <div class="totals">
-              <div>Междинна сума: €${t.subtotal.toFixed(2)}</div>
-              <div>ДДС (20%): €${t.vatAmount.toFixed(2)}</div>
-              <div><strong>Общо: €${t.total.toFixed(2)}</strong></div>
-            </div>
-            <div style="margin-top:12px;" class="muted">
-              Начин на плащане: ${payload.paymentMethod || ''} ${payload.paymentTerms ? ' / Условия: '+payload.paymentTerms : ''}<br>
-              Съставил: ....................................    Подпис: ..............................
-            </div>
-          </body></html>
-        `);
-        win.document.close(); win.print();
-      };
+      });
+
+      $('#printInv', host)?.addEventListener('click', () => { window.print(); });
+    }
+    function openInvoiceEditorModal(reservationId) {
+      showModal(`<div id="invEditorModal" style="max-width:1100px;max-height:82vh;overflow:auto;">Зареждане...</div>`, (wrap) => {
+        const container = wrap.querySelector('#invEditorModal');
+        loadInvoiceEditor(reservationId, container);
+      });
     }
   }
 
@@ -2630,11 +3221,177 @@
         </table>
       </div>
     `;
+    const companyForm = $('#companyForm');
+    const companyFields = {
+      name: companyForm.querySelector('[name="name"]'),
+      mol: companyForm.querySelector('[name="mol"]'),
+      eik: companyForm.querySelector('[name="eik"]'),
+      vat: companyForm.querySelector('[name="vat"]'),
+      city: companyForm.querySelector('[name="city"]'),
+      address: companyForm.querySelector('[name="address"]'),
+      country: companyForm.querySelector('[name="country"]'),
+      phone: companyForm.querySelector('[name="phone"]'),
+      email: companyForm.querySelector('[name="email"]'),
+      bank: companyForm.querySelector('[name="bank"]'),
+      iban: companyForm.querySelector('[name="iban"]'),
+      bic: companyForm.querySelector('[name="bic"]'),
+      proStart: companyForm.querySelector('[name="proStart"]'),
+      invStart: companyForm.querySelector('[name="invStart"]')
+    };
+    const clearCompanyErrors = () => {
+      $$('.err-msg', companyForm).forEach(n => n.remove());
+      $$('.error', companyForm).forEach(n => n.classList.remove('error'));
+    };
+    const saveCompanyBtn = $('#saveCompany');
+    const setCompanyError = (inputEl, msg) => {
+      if (!inputEl) return;
+      inputEl.classList.add('error');
+      const holder = inputEl.parentElement || inputEl;
+      const m = document.createElement('span');
+      m.className = 'err-msg';
+      m.textContent = msg;
+      holder.appendChild(m);
+    };
+    const scrollToCompanyError = () => {
+      const first = $('.error', companyForm);
+      if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    const normSpaces = (v='') => v.replace(/\s+/g, ' ').trim();
+    const validateEIK9 = (eik) => {
+      if (!/^\d{9}$/.test(eik)) return false;
+      const w1 = [1,2,3,4,5,6,7,8];
+      let sum = 0;
+      for (let i=0;i<8;i++) sum += Number(eik[i]) * w1[i];
+      let c = sum % 11;
+      if (c === 10) {
+        const w2 = [3,4,5,6,7,8,9,10];
+        sum = 0;
+        for (let i=0;i<8;i++) sum += Number(eik[i]) * w2[i];
+        c = sum % 11;
+        if (c === 10) c = 0;
+      }
+      return c === Number(eik[8]);
+    };
+    const validateIBANbg = (ibanRaw) => {
+      let cleaned = (ibanRaw||'').replace(/\s/g,'').toUpperCase();
+      if (!cleaned) return { ok:false, err:'empty', value:'' };
+      if (!cleaned.startsWith('BG')) cleaned = `BG${cleaned}`;
+      if (!/^BG\d{2}[A-Z]{4}\d{14}$/.test(cleaned)) return { ok:false, err:'invalid', value:cleaned };
+      const rearr = cleaned.slice(4) + cleaned.slice(0,4);
+      const toNum = rearr.split('').map(ch => {
+        const code = ch.charCodeAt(0);
+        return code >= 65 && code <= 90 ? String(code - 55) : ch;
+      }).join('');
+      let rem = 0n;
+      for (const ch of toNum) rem = (rem * 10n + BigInt(ch)) % 97n;
+      if (rem !== 1n) return { ok:false, err:'invalid', value:cleaned };
+      return { ok:true, value:cleaned };
+    };
+    const validatorsCompany = {
+      name(v) {
+        const val = normSpaces(v);
+        if (!val) return { ok:false, err:'empty', value:'' };
+        const re = /(ООД|ЕООД|АД|ЕАД|СД|КД|ЕТ|ДП|OOD|EOOD|AD|EAD|SD|KD|ET|DP)$/i;
+        if (val.length < 3 || !re.test(val)) return { ok:false, err:'invalid', value:val };
+        return { ok:true, value:val };
+      },
+      mol(v) {
+        const val = normSpaces(v);
+        if (!val) return { ok:false, err:'empty', value:'' };
+        const re = /^[А-Яа-яЁёЪъЬьЮюЯяЩщШшЧчЦцЙйѝІіҐґЇї\- ]+$/u;
+        if (!re.test(val)) return { ok:false, err:'invalid', value:val };
+        const parts = val.split(' ').filter(Boolean);
+        if (parts.length < 2) return { ok:false, err:'invalid', value:val };
+        if (parts.some(p => p.replace(/-/g,'').length < 2)) return { ok:false, err:'invalid', value:val };
+        return { ok:true, value:val };
+      },
+      eik(v) {
+        const digits = (v||'').replace(/\D/g,'');
+        if (!digits) return { ok:false, err:'empty', value:'' };
+        if (!/^\d{9}$|^\d{13}$/.test(digits)) return { ok:false, err:'invalid', value:digits };
+        if (digits.length === 9 && !validateEIK9(digits)) return { ok:false, err:'invalid', value:digits };
+        return { ok:true, value:digits };
+      },
+      vat(v, eikDigits='') {
+        let cleaned = (v||'').replace(/\s/g,'').toUpperCase();
+        if (!cleaned) return { ok:true, value:'' };
+        if (!cleaned.startsWith('BG')) cleaned = `BG${cleaned}`;
+        if (!/^BG\d{9,10}$/.test(cleaned)) return { ok:false, err:'invalid', value:cleaned };
+        const num = cleaned.slice(2);
+        if (num.length === 9 && eikDigits && eikDigits.length === 9 && num !== eikDigits) {
+          return { ok:false, err:'mismatch', value:cleaned };
+        }
+        return { ok:true, value:cleaned };
+      },
+      city(v) {
+        const val = normSpaces(v);
+        if (!val) return { ok:false, err:'empty', value:'' };
+        if (!/^[А-Яа-яЁёЪъЬьЮюЯяЩщШшЧчЦцЙйѝІіҐґЇї\- ]{2,}$/u.test(val)) return { ok:false, err:'invalid', value:val };
+        return { ok:true, value:val };
+      },
+      address(v) {
+        const val = normSpaces(v);
+        if (!val || val.length < 10 || !/(ул\.|бул\.|пл\.|str|street|bul)/i.test(val) || !/\d/.test(val)) {
+          return { ok:false, err:'invalid', value:val };
+        }
+        return { ok:true, value:val };
+      },
+      country(v) {
+        const val = normSpaces(v);
+        if (!val) return { ok:false, err:'empty', value:'' };
+        if (!/^(България|Bulgaria)$/i.test(val)) return { ok:false, err:'invalid', value:val };
+        return { ok:true, value:val };
+      },
+      phone(v) {
+        const digits = (v||'').replace(/\D/g,'');
+        if (!digits) return { ok:false, err:'empty', value:'' };
+        const mobile = /^0(87|88|89)\d{7}$/;
+        const land = /^0[2-9]\d{6,8}$/;
+        if (!mobile.test(digits) && !land.test(digits)) return { ok:false, err:'invalid', value:digits };
+        return { ok:true, value:digits };
+      },
+      email(v) {
+        const val = normSpaces(v).toLowerCase();
+        if (!val) return { ok:false, err:'empty', value:'' };
+        const re = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        if (!re.test(val)) return { ok:false, err:'invalid', value:val };
+        return { ok:true, value:val };
+      },
+      bank(v) {
+        const val = normSpaces(v);
+        if (!val) return { ok:true, value:'' };
+        if (val.length < 3) return { ok:false, err:'invalid', value:val };
+        return { ok:true, value:val };
+      },
+      iban(v, bankFilled=false) {
+        if (!v && !bankFilled) return { ok:true, value:'' };
+        if (!v && bankFilled) return { ok:false, err:'empty', value:'' };
+        return validateIBANbg(v);
+      },
+      bic(v, bankFilled=false) {
+        const val = (v||'').replace(/\s/g,'').toUpperCase();
+        if (!val && !bankFilled) return { ok:true, value:'' };
+        if (!val && bankFilled) return { ok:false, err:'empty', value:'' };
+        if (!/^[A-Z]{4}BG[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(val)) return { ok:false, err:'invalid', value:val };
+        return { ok:true, value:val };
+      },
+      proStart(v) {
+        const n = Number(v);
+        if (!Number.isInteger(n) || n < 1) return { ok:false, err:'invalid', value:v };
+        return { ok:true, value:n };
+      },
+      invStart(v, proVal=1) {
+        const n = Number(v);
+        if (!Number.isInteger(n) || n < 1) return { ok:false, err:'invalid', value:v };
+        if (n < proVal) return { ok:false, err:'lessThanPro', value:n };
+        return { ok:true, value:n };
+      }
+    };
+
     async function loadCompany() {
       let data = null;
       try { data = await apiFetch('/api/company'); } catch { data = null; }
-      const form = $('#companyForm');
-      const set = (n,v) => { const el = form.querySelector(`[name="${n}"]`); if (el) el.value = v || ''; };
+      const set = (n,v) => { const el = companyFields[n]; if (el) el.value = v || ''; };
       set('name', data?.name); set('mol', data?.mol);
       set('eik', data?.eik); set('vat', data?.vat);
       set('city', data?.city); set('address', data?.address);
@@ -2644,12 +3401,86 @@
       set('proStart', data?.proStart || 1); set('invStart', data?.invStart || 1);
     }
     loadCompany();
+    const validateCompanyForm = (showErrors=false) => {
+      clearCompanyErrors();
+      const res = {};
+      let ok = true;
+      const nameVal = validatorsCompany.name(companyFields.name.value);
+      if (!nameVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.name, 'Въведете име с правна форма (ООД/ЕООД/АД...)'); }
+      else res.name = nameVal.value;
+
+      const molVal = validatorsCompany.mol(companyFields.mol.value);
+      if (!molVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.mol, 'МОЛ трябва да е на кирилица, 2+ имена'); }
+      else res.mol = molVal.value;
+
+      const eikVal = validatorsCompany.eik(companyFields.eik.value);
+      if (!eikVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.eik, 'ЕИК/БУЛСТАТ трябва да е 9 или 13 цифри с валидна контр. сума'); }
+      else res.eik = eikVal.value;
+
+      const vatVal = validatorsCompany.vat(companyFields.vat.value, res.eik);
+      if (!vatVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.vat, vatVal.err==='mismatch' ? 'ДДС № трябва да съвпада с ЕИК (9 цифри) или да е ЕГН (10 цифри)' : 'Невалиден ДДС №'); }
+      else res.vat = vatVal.value;
+
+      const cityVal = validatorsCompany.city(companyFields.city.value);
+      if (!cityVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.city, 'Градът трябва да е на кирилица, поне 2 букви'); }
+      else res.city = cityVal.value;
+
+      const addrVal = validatorsCompany.address(companyFields.address.value);
+      if (!addrVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.address, 'Адрес: град + ул./бул. + номер, мин. 10 символа'); }
+      else res.address = addrVal.value;
+
+      const countryVal = validatorsCompany.country(companyFields.country.value);
+      if (!countryVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.country, 'Стойност: България / Bulgaria'); }
+      else res.country = countryVal.value;
+
+      const phoneVal = validatorsCompany.phone(companyFields.phone.value);
+      if (!phoneVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.phone, 'Телефон: мобилен 087/088/089 +7 или стационарен с код'); }
+      else res.phone = phoneVal.value;
+
+      const emailVal = validatorsCompany.email(companyFields.email.value);
+      if (!emailVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.email, 'Невалиден имейл'); }
+      else res.email = emailVal.value;
+
+      const bankVal = validatorsCompany.bank(companyFields.bank.value);
+      if (!bankVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.bank, 'Въведете пълно име на банката (мин. 3 символа)'); }
+      else res.bank = bankVal.value;
+
+      const ibanVal = validatorsCompany.iban(companyFields.iban.value, !!res.bank);
+      if (!ibanVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.iban, ibanVal.err==='empty' ? 'IBAN е задължителен при попълнена банка' : 'Невалиден IBAN (BG + 20 знака)'); }
+      else res.iban = ibanVal.value;
+
+      const bicVal = validatorsCompany.bic(companyFields.bic.value, !!res.bank);
+      if (!bicVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.bic, bicVal.err==='empty' ? 'BIC е задължителен при попълнена банка' : 'Невалиден BIC (8 или 11 знака, съдържа BG)'); }
+      else res.bic = bicVal.value;
+
+      const proVal = validatorsCompany.proStart(companyFields.proStart.value);
+      if (!proVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.proStart, 'Старт проформа трябва да е цяло число ≥ 1'); }
+      else res.proStart = proVal.value;
+
+      const invVal = validatorsCompany.invStart(companyFields.invStart.value, proVal.ok ? proVal.value : 1);
+      if (!invVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.invStart, invVal.err==='lessThanPro' ? 'Старт фактура трябва да е ≥ старт проформа' : 'Старт фактура трябва да е цяло число ≥ 1'); }
+      else res.invStart = invVal.value;
+
+      if (!ok && showErrors) scrollToCompanyError();
+      return { ok, values: res };
+    };
+
+    const updateSaveBtn = () => {
+      const r = validateCompanyForm(true);
+      if (saveCompanyBtn) saveCompanyBtn.disabled = !r.ok;
+    };
+
+    Object.values(companyFields).forEach(el => {
+      if (!el) return;
+      el.addEventListener('input', () => { validateCompanyForm(true); updateSaveBtn(); });
+      el.addEventListener('blur', () => { validateCompanyForm(true); updateSaveBtn(); });
+    });
+
     $('#companyForm').onsubmit = async (e) => {
       e.preventDefault();
-      const f = e.currentTarget;
-      const payload = Object.fromEntries(new FormData(f).entries());
-      payload.proStart = payload.proStart ? Number(payload.proStart) : 1;
-      payload.invStart = payload.invStart ? Number(payload.invStart) : 1;
+      const res = validateCompanyForm(true);
+      if (!res.ok) return;
+      const payload = { ...res.values };
       try {
         await apiFetch('/api/company', { method: 'PUT', body: JSON.stringify(payload) });
         $('#companyMsg').style.display = 'block';
