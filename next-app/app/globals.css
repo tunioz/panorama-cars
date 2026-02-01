@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-background: #f1f3f7;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f6f7f9;
+  --color-primary: #2f74ff;
+  --color-secondary: #4b5563;
+  --color-accent: #16c784;
+  --color-text: #0b1220;
+  --color-text-muted: #4b5563;
+  --color-border: #e3e8ef;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-background);
+  color: var(--color-text);
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    "Roboto", "Helvetica", "Arial", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.shadow-card {
+  box-shadow: 0 10px 24px rgba(11, 18, 32, 0.1), 0 4px 8px rgba(11, 18, 32, 0.06);
+}

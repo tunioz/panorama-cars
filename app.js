@@ -395,9 +395,9 @@
     app.innerHTML = `
       <nav class="topnav">
         <div class="logo">CR</div>
-        <a class="navbtn active" href="#/" title="Търсене">🔎</a>
-        <a class="navbtn" href="#/admin" title="Админ">🛠️</a>
+        <a class="navbtn active" href="#/" title="Коли под наем">Коли под наем</a>
         <div class="spacer"></div>
+        <a class="navbtn" href="#/admin" title="Админ">Админ</a>
       </nav>
       <section class="panel filters" id="filters"></section>
       <section class="panel results" id="results"></section>
@@ -408,9 +408,9 @@
     app.innerHTML = `
       <nav class="topnav">
         <div class="logo">CR</div>
-        <a class="navbtn" href="#/" title="Търсене">🔎</a>
-        <a class="navbtn active" href="#/admin" title="Админ">🛠️</a>
+        <a class="navbtn" href="#/" title="Коли под наем">Коли под наем</a>
         <div class="spacer"></div>
+        <a class="navbtn active" href="#/admin" title="Админ">Админ</a>
       </nav>
       <section id="adminRoot" class="admin-shell" style="grid-column: 1 / -1;"></section>
     `;
