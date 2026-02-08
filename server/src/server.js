@@ -18,6 +18,12 @@ const PORT = process.env.PORT || 5175;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5174';
 
+// Startup diagnostics
+console.log('[boot] DATABASE_URL =', process.env.DATABASE_URL);
+console.log('[boot] PORT =', PORT);
+console.log('[boot] CWD =', process.cwd());
+console.log('[boot] NODE_ENV =', process.env.NODE_ENV);
+
 // Be permissive during development to avoid CORS issues from the embedded browser
 app.use(cors({ origin: true, credentials: true }));
 app.options('*', cors({ origin: true, credentials: true }));
@@ -222,7 +228,15 @@ async function createInvoiceForReservation(reservation, type = 'PROFORMA', compa
 }
 
 // Health
-app.get('/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+app.get('/health', async (req, res) => {
+  try {
+    const carCount = await prisma.car.count();
+    const userCount = await prisma.user.count();
+    res.json({ ok: true, time: new Date().toISOString(), cars: carCount, users: userCount, db: 'connected' });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // Auth
 app.post('/auth/login', async (req, res) => {
