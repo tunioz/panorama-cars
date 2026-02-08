@@ -33,6 +33,113 @@
   const formatMoney = (v) => `$${v.toFixed(2)}`;
   const uid = () => Math.random().toString(36).slice(2, 9);
   const carParamsCache = new Map();
+
+  /* ===== Admin Auth ===== */
+  // Credentials are hashed (SHA-256 hex) so they're not in plain text in source.
+  // Default: user=evgi, pass=evgi
+  const _AH = { u: '518a0a45f6802f5d8553634af3455c014c8cd981299c942963f7c7804272d979', p: '518a0a45f6802f5d8553634af3455c014c8cd981299c942963f7c7804272d979' };
+  const SESSION_TTL = 4 * 60 * 60 * 1000; // 4 hours
+  const MAX_LOGIN_ATTEMPTS = 5;
+  const LOCKOUT_TIME = 5 * 60 * 1000; // 5 minutes
+
+  async function _sha256(str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function isAdminLoggedIn() {
+    try {
+      const raw = localStorage.getItem('_adminSession');
+      if (!raw) return false;
+      const session = JSON.parse(raw);
+      if (!session?.token || !session?.exp) return false;
+      if (Date.now() > session.exp) {
+        localStorage.removeItem('_adminSession');
+        return false;
+      }
+      return true;
+    } catch { return false; }
+  }
+
+  function _getLoginAttempts() {
+    try {
+      const raw = localStorage.getItem('_loginAttempts');
+      if (!raw) return { count: 0, lockedUntil: 0 };
+      return JSON.parse(raw);
+    } catch { return { count: 0, lockedUntil: 0 }; }
+  }
+
+  function _isLoginLocked() {
+    const a = _getLoginAttempts();
+    if (a.lockedUntil && Date.now() < a.lockedUntil) return true;
+    return false;
+  }
+
+  function _getLockRemainingSeconds() {
+    const a = _getLoginAttempts();
+    if (!a.lockedUntil || Date.now() >= a.lockedUntil) return 0;
+    return Math.ceil((a.lockedUntil - Date.now()) / 1000);
+  }
+
+  function _recordFailedLogin() {
+    const a = _getLoginAttempts();
+    a.count = (a.count || 0) + 1;
+    if (a.count >= MAX_LOGIN_ATTEMPTS) {
+      a.lockedUntil = Date.now() + LOCKOUT_TIME;
+      a.count = 0; // reset count, the lock takes over
+    }
+    localStorage.setItem('_loginAttempts', JSON.stringify(a));
+  }
+
+  function _resetLoginAttempts() {
+    localStorage.removeItem('_loginAttempts');
+  }
+
+  async function loginAdmin(user, pass) {
+    if (_isLoginLocked()) return { ok: false, locked: true, seconds: _getLockRemainingSeconds() };
+    const userHash = await _sha256(user);
+    const passHash = await _sha256(pass);
+    if (userHash === _AH.u && passHash === _AH.p) {
+      const token = crypto.getRandomValues(new Uint8Array(32));
+      const tokenHex = [...token].map(b => b.toString(16).padStart(2, '0')).join('');
+      localStorage.setItem('_adminSession', JSON.stringify({
+        token: tokenHex,
+        exp: Date.now() + SESSION_TTL
+      }));
+      _resetLoginAttempts();
+      return { ok: true };
+    }
+    _recordFailedLogin();
+    if (_isLoginLocked()) return { ok: false, locked: true, seconds: _getLockRemainingSeconds() };
+    return { ok: false, locked: false, remaining: MAX_LOGIN_ATTEMPTS - _getLoginAttempts().count };
+  }
+
+  function logoutAdmin() {
+    localStorage.removeItem('_adminSession');
+    location.hash = '#/';
+  }
+
+  /** Escape HTML to prevent XSS in dynamic content */
+  const escHtml = (str) => {
+    if (str == null) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  };
+
+  /** Global handler for broken car images — show SVG silhouette fallback */
+  document.addEventListener('error', (e) => {
+    const el = e.target;
+    if (el.tagName === 'IMG' && (el.classList.contains('cc-photo') || el.classList.contains('cdm-main-img') || el.classList.contains('cdm-thumb'))) {
+      el.onerror = null; // prevent infinite loop
+      el.src = `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200"><rect width="400" height="200" fill="#F3F4F6"/><text x="200" y="110" text-anchor="middle" fill="#9CA3AF" font-size="14" font-family="sans-serif">Снимката не е налична</text></svg>')}`;
+      el.alt = 'Снимката не е налична';
+    }
+  }, true);
+
   const RES_STATUS = [
     { value: 'REQUESTED', label: 'Заявка' },
     { value: 'APPROVED', label: 'Одобрена' },
@@ -148,7 +255,7 @@
       const q = inputEl.value.trim();
       const items = !q ? options.slice(0, 10) : options.filter(o => matchQuery(o, q)).slice(0, 10);
       if (!items.length) { listEl.style.display = 'none'; return; }
-      listEl.innerHTML = items.map((o, i) => `<div class="typeahead-item" data-i="${i}">${o}</div>`).join('');
+      listEl.innerHTML = items.map((o, i) => `<div class="typeahead-item" data-i="${i}">${escHtml(o)}</div>`).join('');
       // Position fixed to avoid clipping issues
       const rect = inputEl.getBoundingClientRect();
       listEl.style.position = 'fixed';
@@ -173,11 +280,25 @@
   function showModal(html, onMount) {
     const wrap = document.createElement('div');
     wrap.className = 'modal-backdrop';
-    wrap.innerHTML = `<div class="modal-card">${html}</div>`;
+    wrap.setAttribute('role', 'presentation');
+    wrap.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true" aria-label="Диалогов прозорец">${html}</div>`;
     document.body.appendChild(wrap);
-    const close = () => wrap.remove();
+    // Trap focus: remember previously focused element
+    const prevFocus = document.activeElement;
+    const close = () => {
+      wrap.remove();
+      document.removeEventListener('keydown', escHandler);
+      if (prevFocus) prevFocus.focus();
+    };
+    // Close on Escape key
+    const escHandler = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', escHandler);
     if (onMount) onMount(wrap, close);
+    // Close on backdrop click
     wrap.addEventListener('click', (e) => { if (e.target === wrap) close(); });
+    // Focus the modal card for keyboard users
+    const card = wrap.querySelector('.modal-card');
+    if (card) { card.setAttribute('tabindex', '-1'); card.focus(); }
     return { close };
   }
 
@@ -235,7 +356,7 @@
       const res = await fetch(`${API_BASE}/api/cars/${id}`, { headers: { accept: 'application/json' } });
       if (!res.ok) throw new Error('Failed');
       const c = await res.json();
-      return {
+      const car = {
         id: c.id,
         brand: c.brand,
         model: c.model,
@@ -249,6 +370,18 @@
         images: Array.isArray(c.images) ? c.images : [],
         status: c.status === 'SERVICE' ? 'в сервиз' : c.status === 'RESERVED' ? 'резервиран' : 'наличен'
       };
+      // Overlay type & transmission from dynamic params (same as fetchCarsFromApi)
+      try {
+        if (!Array.isArray(paramDefs) || !paramDefs.length) paramDefs = await apiFetch('/api/params');
+        const typeDef = (paramDefs || []).find(p => p.name === 'Вид кола');
+        const gearDef = (paramDefs || []).find(p => p.name === 'Скоростна кутия');
+        if (typeDef || gearDef) {
+          const vals = await apiFetch(`/api/cars/${id}/params`);
+          if (typeDef) { const v = (vals || []).find(x => x.id === typeDef.id)?.value; if (v) car.type = v; }
+          if (gearDef) { const g = (vals || []).find(x => x.id === gearDef.id)?.value; if (g) car.transmission = g; }
+        }
+      } catch {}
+      return car;
     } catch (e) { console.error(e); return null; }
   }
   function normalizeInvoiceItems(items) {
@@ -311,9 +444,14 @@
         const typeDef = (paramDefs || []).find(p => p.name === 'Вид кола');
         const gearDef = (paramDefs || []).find(p => p.name === 'Скоростна кутия');
         if (typeDef || gearDef) {
+          const fetchWithRetry = async (url, retries = 2) => {
+            for (let i = 0; i <= retries; i++) {
+              try { return await apiFetch(url); } catch (e) { if (i === retries) throw e; }
+            }
+          };
           list = await Promise.all(list.map(async (car) => {
             try {
-              const vals = await apiFetch(`/api/cars/${car.id}/params`);
+              const vals = await fetchWithRetry(`/api/cars/${car.id}/params`);
               if (typeDef) {
                 const v = (vals || []).find(x => x.id === typeDef.id)?.value;
                 if (v) car.type = v;
@@ -322,11 +460,11 @@
                 const g = (vals || []).find(x => x.id === gearDef.id)?.value;
                 if (g) car.transmission = g;
               }
-            } catch {}
+            } catch (e) { console.warn(`[overlay] params for car ${car.id} failed:`, e); }
             return car;
           }));
         }
-      } catch {}
+      } catch (e) { console.warn('[overlay] param overlay failed:', e); }
       return list;
     } catch {
       return null;
@@ -407,8 +545,11 @@
       { href:'#/vehicles', label:'АвтоПарк', id:'vehicles' },
       { href:'#/about-us', label:'За нас', id:'about-us' },
       { href:'#footer', label:'Контакти', id:'contact' },
-      { href:'#/admin', label:'Админ', id:'admin' },
     ];
+    // Only show Админ link if logged in
+    if (isAdminLoggedIn()) {
+      navLinks.push({ href:'#/admin', label:'Админ', id:'admin' });
+    }
     const desktopLinks = navLinks.map(l => {
       const cls = l.id === activePage ? ' class="hdr-link-active"' : '';
       return `<a href="${l.href}"${cls}>${l.label}</a>`;
@@ -420,14 +561,14 @@
     const hdrPhone = companyInfo?.phone || '+359 888 810 469';
     const hdrPhoneClean = hdrPhone.replace(/[\s-]/g, '');
     return `
-      <header class="site-header">
+      <header class="site-header" role="banner">
         <a href="#/" class="logo-brand">${logoSVG} Meniar.com</a>
-        <nav id="desktopNav">${desktopLinks}</nav>
+        <nav id="desktopNav" aria-label="Основна навигация">${desktopLinks}</nav>
         <div class="hdr-spacer"></div>
-        <a href="tel:${hdrPhoneClean}" class="hdr-phone">${phoneSVGInline} ${hdrPhone}</a>
-        <button class="hamburger" id="hamburgerBtn"></button>
+        <a href="tel:${hdrPhoneClean}" class="hdr-phone" aria-label="Телефон: ${escHtml(hdrPhone)}">${phoneSVGInline} ${hdrPhone}</a>
+        <button class="hamburger" id="hamburgerBtn" aria-label="Отвори менюто" aria-expanded="false" aria-controls="mobileNav"></button>
       </header>
-      <div id="mobileNav" class="mobile-nav" style="display:none;">${mobileLinks}</div>
+      <nav id="mobileNav" class="mobile-nav" style="display:none;" aria-label="Мобилна навигация">${mobileLinks}</nav>
     `;
   }
 
@@ -443,10 +584,10 @@
     // Unique car types from loaded cars
     const carTypes = [...new Set(cars.map(c => c.type).filter(Boolean))];
     const carTypesHTML = carTypes.length
-      ? carTypes.map(t => `<li><a href="#/vehicles">${t}</a></li>`).join('')
+      ? carTypes.map(t => `<li><a href="#/vehicles?type=${encodeURIComponent(t)}">${t}</a></li>`).join('')
       : '<li><a href="#/vehicles">Всички коли</a></li>';
     return `
-      <footer class="site-footer" id="footer">
+      <footer class="site-footer" id="footer" role="contentinfo">
         <div class="foot-inner">
           <div class="foot-contact">
             <div class="foot-contact-item"><div class="foot-contact-icon">${svgCarIcon}</div><div><div class="fc-value" style="font-weight:600;">Meniar.com</div></div></div>
@@ -455,7 +596,7 @@
             <div class="foot-contact-item"><div class="foot-contact-icon">${svgPhone}</div><div><div class="fc-label">Телефон</div><div class="fc-value">${ftPhone}</div></div></div>
           </div>
           <div class="foot-links">
-            <div><p style="font-size:13px;color:#9CA3AF;line-height:1.6;">Вашият надежден партньор за наем на автомобили. Качество и комфорт на достъпна цена.</p><div class="foot-socials"><a href="#">f</a><a href="#">t</a><a href="#">in</a><a href="#">ig</a></div></div>
+            <div><p style="font-size:13px;color:#9CA3AF;line-height:1.6;">Вашият надежден партньор за наем на автомобили. Качество и комфорт на достъпна цена.</p><div class="foot-socials"><a href="#" aria-label="Facebook" rel="noopener noreferrer" target="_blank"><i class="fa-brands fa-facebook-f"></i></a><a href="#" aria-label="Twitter" rel="noopener noreferrer" target="_blank"><i class="fa-brands fa-x-twitter"></i></a><a href="#" aria-label="LinkedIn" rel="noopener noreferrer" target="_blank"><i class="fa-brands fa-linkedin-in"></i></a><a href="#" aria-label="Instagram" rel="noopener noreferrer" target="_blank"><i class="fa-brands fa-instagram"></i></a></div></div>
             <div><h4>Бързи връзки</h4><ul><li><a href="#/about-us">За нас</a></li><li><a href="#/vehicles">АвтоПарк</a></li><li><a href="#/about-us" onclick="setTimeout(()=>{const f=document.getElementById('faq');if(f)f.scrollIntoView({behavior:'smooth'})},100)">Въпроси & Отговори</a></li><li><a href="#/policies">Условия и Политики</a></li></ul></div>
             <div><h4>АвтоПарк</h4><ul>${carTypesHTML}</ul></div>
           </div>
@@ -474,8 +615,24 @@
       const open = mNav.style.display !== 'none';
       mNav.style.display = open ? 'none' : 'block';
       hBtn.innerHTML = open ? svgMenu : svgX;
+      hBtn.setAttribute('aria-expanded', String(!open));
+      hBtn.setAttribute('aria-label', open ? 'Отвори менюто' : 'Затвори менюто');
     };
-    $$('a', mNav).forEach(a => a.addEventListener('click', () => { mNav.style.display = 'none'; hBtn.innerHTML = svgMenu; }));
+    $$('a', mNav).forEach(a => a.addEventListener('click', () => {
+      mNav.style.display = 'none';
+      hBtn.innerHTML = svgMenu;
+      hBtn.setAttribute('aria-expanded', 'false');
+      hBtn.setAttribute('aria-label', 'Отвори менюто');
+    }));
+
+    // Scroll to top when clicking any footer link
+    const footer = $('#footer');
+    if (footer) {
+      footer.addEventListener('click', (e) => {
+        const link = e.target.closest('a[href^="#/"]');
+        if (link) scrollToTop();
+      });
+    }
   }
 
   /* SVG icon helpers for landing sections */
@@ -503,7 +660,7 @@
       ${siteHeaderHTML('home')}
 
       <!-- HERO -->
-      <section class="hero-section">
+      <section class="hero-section" id="main-content">
         <div class="hero-inner">
           <div class="hero-text">
             <h1>Преживей пътя като никога преди!</h1>
@@ -556,6 +713,7 @@
       <div id="vehicles">
         <div class="vehicles-heading">
           <h2>Налични коли в автопарка</h2>
+          <p class="vehicles-period" id="vehiclesPeriod"></p>
         </div>
         <section class="panel results" id="results" style="border:none; box-shadow:none; max-width:1200px; margin:0 auto;"></section>
       </div>
@@ -579,8 +737,9 @@
         <h2>Наслаждавайте се на всеки километър <br>с приятна компания</h2>
         <p>Абонирайте се за нашия бюлетин и получавайте специални оферти.</p>
         <div class="cta-form">
-          <input type="email" placeholder="Вашият имейл">
-          <button>Абонирай се сега</button>
+          <label for="ctaEmail" class="sr-only">Вашият имейл</label>
+          <input id="ctaEmail" type="email" placeholder="Вашият имейл" autocomplete="email" aria-label="Имейл адрес за бюлетин">
+          <button type="button" aria-label="Абонирай се за бюлетина">Абонирай се сега</button>
         </div>
       </section>
 
@@ -772,47 +931,23 @@
   function renderResults() {
     const r = $('#results');
     const count = filtered.length;
-    const plainParams = (paramDefs || []).filter(d => !['Вид кола','Скоростна кутия'].includes(d.name));
     r.innerHTML = `
-      <div class="results-header" style="justify-content:flex-start;gap:12px;">
-        <button class="btn-secondary" id="btnMoreFilters" style="height:36px;">${showMoreFilters ? 'Скрий филтрите' : 'Още филтри'}</button>
-      </div>
-      <div id="inlineFilters" style="padding:12px; display:${showMoreFilters?'block':'none'}; background:#f6f7f9; border:1px solid var(--color-border); border-radius:10px; margin:0 16px 8px 16px;">
-        <div class="grid-2" style="gap:12px;">
-          ${plainParams.map(d => {
-            const current = extraFilters[d.id] ?? '';
-            if (d.type === 'ENUM') {
-              const opts = (d.options||[]).map(o => `<option ${current===o?'selected':''}>${o}</option>`).join('');
-              return `<div><div class="section-title">${d.name}</div><select class="select" data-pid="${d.id}"><option value="">—</option>${opts}</select></div>`;
-            }
-            return `<div><div class="section-title">${d.name}${d.unit?` (${d.unit})`:''}</div><input class="input" data-pid="${d.id}" value="${current}"></div>`;
-          }).join('')}
-        </div>
-        <div class="row" style="justify-content:flex-end; gap:8px; margin-top:10px;">
-          <button class="btn-secondary" id="clearInline">Изчисти</button>
-          <button class="btn-primary" id="applyInline">Приложи</button>
-        </div>
-      </div>
       <div class="results-grid" id="resultsGrid" style="grid-template-columns: repeat(3, minmax(280px, 1fr));"></div>
     `;
-    $('#btnMoreFilters')?.addEventListener('click', () => { showMoreFilters = !showMoreFilters; renderResults(); });
-    $('#clearInline')?.addEventListener('click', async () => {
-      extraFilters = {};
-      await Promise.all(cars.map(c => loadCarParams(c.id)));
-      applyFilters();
-    });
-    $('#applyInline')?.addEventListener('click', async () => {
-      const inputs = $$('[data-pid]', $('#inlineFilters'));
-      const next = {};
-      inputs.forEach(el => {
-        const pid = el.getAttribute('data-pid');
-        const val = (el.tagName === 'SELECT' ? el.value : el.value).trim();
-        if (val) next[pid] = val;
-      });
-      extraFilters = next;
-      await Promise.all(cars.map(c => loadCarParams(c.id)));
-      applyFilters();
-    });
+
+    // Update period subtitle
+    const periodEl = $('#vehiclesPeriod');
+    if (periodEl) {
+      if (filterState.from && filterState.to) {
+        periodEl.textContent = 'За периода: ' + fmtDate(filterState.from) + ' → ' + fmtDate(filterState.to);
+      } else if (filterState.from) {
+        periodEl.textContent = 'За периода: от ' + fmtDate(filterState.from);
+      } else if (filterState.to) {
+        periodEl.textContent = 'За периода: до ' + fmtDate(filterState.to);
+      } else {
+        periodEl.textContent = 'За периода: не е избран период';
+      }
+    }
 
     const grid = $('#resultsGrid');
     grid.innerHTML = '';
@@ -826,9 +961,18 @@
       </svg>`;
       return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
     };
+    if (!filtered.length) {
+      grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:48px 24px;">
+        <i class="fa-solid fa-car-burst" style="font-size:48px;color:#D1D5DB;margin-bottom:16px;display:block;"></i>
+        <p style="font-size:18px;font-weight:600;color:#374151;margin:0 0 8px;">Няма намерени автомобили</p>
+        <p style="font-size:14px;color:#6B7280;margin:0;">Опитайте с различни филтри или период.</p>
+      </div>`;
+      return;
+    }
     filtered.forEach((c, i) => {
       const card = document.createElement('article');
       card.className = 'cc';
+      card.setAttribute('aria-label', `${escHtml(c.brand)} ${escHtml(c.model)}`);
       const firstImg = (() => {
         const im = (c.images || [])[0];
         const p = im && (im.thumb || im.large);
@@ -842,15 +986,15 @@
       card.innerHTML = `
         <div class="cc-img" data-car-details="${c.id}">
           ${firstImg
-            ? `<img alt="${c.brand} ${c.model}" src="${firstImg}" loading="lazy" class="cc-photo">`
-            : `<svg viewBox="0 0 400 200" class="cc-sil"><path d="M50 140 Q60 100 120 90 L160 70 Q200 55 260 70 L310 90 Q360 100 370 140 Z" fill="#9CA3AF"/><circle cx="120" cy="150" r="22" fill="#6B7280"/><circle cx="120" cy="150" r="12" fill="#D1D5DB"/><circle cx="310" cy="150" r="22" fill="#6B7280"/><circle cx="310" cy="150" r="12" fill="#D1D5DB"/><rect x="40" y="140" width="340" height="6" rx="3" fill="#9CA3AF"/></svg>`
+            ? `<img alt="${escHtml(c.brand)} ${escHtml(c.model)}" src="${firstImg}" loading="lazy" class="cc-photo">`
+            : `<svg viewBox="0 0 400 200" class="cc-sil" role="img" aria-label="${escHtml(c.brand)} ${escHtml(c.model)}"><path d="M50 140 Q60 100 120 90 L160 70 Q200 55 260 70 L310 90 Q360 100 370 140 Z" fill="#9CA3AF"/><circle cx="120" cy="150" r="22" fill="#6B7280"/><circle cx="120" cy="150" r="12" fill="#D1D5DB"/><circle cx="310" cy="150" r="22" fill="#6B7280"/><circle cx="310" cy="150" r="12" fill="#D1D5DB"/><rect x="40" y="140" width="340" height="6" rx="3" fill="#9CA3AF"/></svg>`
           }
         </div>
         <div class="cc-body">
           <div class="cc-head">
             <div>
-              <h3 class="cc-name" data-car-details="${c.id}">${c.brand} ${c.model}</h3>
-              <p class="cc-type">${c.type || ''}</p>
+              <h3 class="cc-name" data-car-details="${c.id}">${escHtml(c.brand)} ${escHtml(c.model)}</h3>
+              <p class="cc-type">${escHtml(c.type || '')}</p>
             </div>
             <div class="cc-price-block">
               <span class="cc-price">€${priceDay.toFixed(0)}</span>
@@ -1047,107 +1191,127 @@
         }).join('\\n');
 
         /* Build spec cards for Technical Specification grid */
-        const specIconSVG = (name) => {
+        const specIconFA = (name) => {
           const n = (name || '').toLowerCase();
-          if (n.includes('скоростна') || n.includes('gear'))
-            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
-          if (n.includes('гориво') || n.includes('fuel'))
-            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M16 3h1a2 2 0 0 1 2 2v11.5a2.5 2.5 0 1 1-5 0V4a1 1 0 0 1 1-1Z"/><path d="M6 3h8v18H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M6 14h8"/><path d="M18 7h1.5a1.5 1.5 0 0 1 0 3H18"/><path d="M8 7h2"/></svg>`;
+          if (n.includes('скоростна') || n.includes('gear') || n.includes('кутия') || n.includes('transmission'))
+            return '<i class="fa-solid fa-gears"></i>';
+          if (n.includes('гориво') || n.includes('fuel') || n.includes('бензин') || n.includes('дизел'))
+            return '<i class="fa-solid fa-gas-pump"></i>';
           if (n.includes('врати') || n.includes('door'))
-            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M6 3h12v18H6z"/><path d="M14 12h2"/></svg>`;
-          if (n.includes('седалки') || n.includes('места') || n.includes('seat'))
-            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"/><path d="M5.5 21a8.38 8.38 0 0 1 13 0"/></svg>`;
-          if (n.includes('конски') || n.includes('мощност') || n.includes('horse') || n.includes('power'))
-            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M12 2v7l-2 2"/><path d="m12 9 2 2"/><circle cx="12" cy="13" r="8"/></svg>`;
-          if (n.includes('багаж') || n.includes('luggage'))
-            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><rect x="5" y="7" width="14" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M9 11v4"/><path d="M15 11v4"/></svg>`;
-          if (n.includes('вид кола') || n.includes('тип') || n.includes('type'))
-            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M5 17h14M5 17a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2l2-3h6l2 3h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2"/><circle cx="7.5" cy="17" r="2"/><circle cx="16.5" cy="17" r="2"/></svg>`;
-          if (n.includes('климат') || n.includes('air'))
-            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="m12 2 0 20"/><path d="m4.93 4.93 14.14 14.14"/><path d="m4.93 19.07 14.14-14.14"/><path d="m3 12 18 0"/></svg>`;
-          if (n.includes('разстояние') || n.includes('distance') || n.includes('пробег'))
-            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M4 19L8 5h8l4 14"/><line x1="12" y1="5" x2="12" y2="19" stroke-dasharray="2 2"/></svg>`;
-          return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l2 2"/></svg>`;
+            return '<i class="fa-solid fa-door-open"></i>';
+          if (n.includes('седалки') || n.includes('места') || n.includes('seat') || n.includes('пътник'))
+            return '<i class="fa-solid fa-user-group"></i>';
+          if (n.includes('конски') || n.includes('мощност') || n.includes('horse') || n.includes('power') || n.includes('к.с'))
+            return '<i class="fa-solid fa-bolt"></i>';
+          if (n.includes('багаж') || n.includes('luggage') || n.includes('куфар'))
+            return '<i class="fa-solid fa-suitcase-rolling"></i>';
+          if (n.includes('вид кола') || n.includes('тип') || n.includes('type') || n.includes('категория'))
+            return '<i class="fa-solid fa-car"></i>';
+          if (n.includes('климат') || n.includes('air') || n.includes('клима'))
+            return '<i class="fa-solid fa-snowflake"></i>';
+          if (n.includes('разстояние') || n.includes('distance') || n.includes('пробег') || n.includes('километ'))
+            return '<i class="fa-solid fa-road"></i>';
+          if (n.includes('цвят') || n.includes('color') || n.includes('colour'))
+            return '<i class="fa-solid fa-palette"></i>';
+          if (n.includes('година') || n.includes('year') || n.includes('произв'))
+            return '<i class="fa-solid fa-calendar"></i>';
+          if (n.includes('двигател') || n.includes('engine') || n.includes('кубик'))
+            return '<i class="fa-solid fa-gear"></i>';
+          if (n.includes('каросерия') || n.includes('обем') || n.includes('cargo') || n.includes('trunk'))
+            return '<i class="fa-solid fa-box-open"></i>';
+          if (n.includes('тегло') || n.includes('weight') || n.includes('маса'))
+            return '<i class="fa-solid fa-weight-hanging"></i>';
+          if (n.includes('скорост') || n.includes('speed'))
+            return '<i class="fa-solid fa-gauge-high"></i>';
+          if (n.includes('навигаци') || n.includes('gps') || n.includes('navi'))
+            return '<i class="fa-solid fa-location-crosshairs"></i>';
+          if (n.includes('камер') || n.includes('camera') || n.includes('паркинг'))
+            return '<i class="fa-solid fa-video"></i>';
+          if (n.includes('bluetooth') || n.includes('блутут'))
+            return '<i class="fa-brands fa-bluetooth-b"></i>';
+          if (n.includes('подгрев') || n.includes('отопл') || n.includes('heat'))
+            return '<i class="fa-solid fa-temperature-arrow-up"></i>';
+          if (n.includes('abs') || n.includes('спирачк') || n.includes('brake'))
+            return '<i class="fa-solid fa-brake-warning"></i>';
+          if (n.includes('airbag') || n.includes('въздушн') || n.includes('еърбег'))
+            return '<i class="fa-solid fa-shield-halved"></i>';
+          if (n.includes('регистрац') || n.includes('номер') || n.includes('plate'))
+            return '<i class="fa-solid fa-id-card"></i>';
+          return '<i class="fa-solid fa-circle-info"></i>';
         };
-        const specLabel = (name) => {
-          const n = (name || '').toLowerCase();
-          if (n.includes('скоростна')) return 'Скоростна кутия';
-          if (n.includes('гориво')) return 'Гориво';
-          if (n.includes('врати')) return 'Врати';
-          if (n.includes('седалки') || n.includes('места')) return 'Места';
-          if (n.includes('конски') || n.includes('мощност')) return 'Мощност';
-          if (n.includes('багаж')) return 'Багаж';
-          if (n.includes('вид кола') || n.includes('тип')) return 'Тип';
-          if (n.includes('климат') || n.includes('air')) return 'Климатик';
-          if (n.includes('разстояние') || n.includes('distance') || n.includes('пробег')) return 'Пробег';
-          return name;
-        };
-        const specCards = (params || []).filter(p => p?.value).map(p =>
-          `<div class="cdm-spec-card">
-            <div class="cdm-spec-icon">${specIconSVG(p.name)}</div>
-            <div class="cdm-spec-label">${specLabel(p.name)}</div>
-            <div class="cdm-spec-value">${p.value}${p.unit ? ' ' + p.unit : ''}</div>
-          </div>`
-        ).join('');
+        /* Split params: highlight (top) vs rest (bottom) */
+        const highlightKeys = ['вид кола', 'гориво', 'скоростна кутия', 'багаж'];
+        const isHighlight = (name) => highlightKeys.some(k => (name || '').toLowerCase().includes(k));
+        const allParams = params || [];
+        const topParams = allParams.filter(p => isHighlight(p.name) && p?.value);
+        const restParams = allParams.filter(p => !isHighlight(p.name));
+        // Sort rest: with value first, without value second
+        const restWithVal = restParams.filter(p => p?.value);
+        const restNoVal = restParams.filter(p => !p?.value);
+        const sortedRest = [...restWithVal, ...restNoVal];
 
-        /* Equipment list (boolean YES params) */
-        const equipment = (params || []).filter(p => {
-          const v = (p.value || '').toString().toLowerCase();
-          return v === 'да' || v === 'yes' || v === 'true' || v === '1';
-        });
-        const equipHTML = equipment.length ? `
-          <div class="cdm-equip">
-            <h3 class="cdm-section-title">Car Equipment</h3>
-            <div class="cdm-equip-grid">
-              ${equipment.map(p => `<div class="cdm-equip-item">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="#6366F1" stroke="none"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4" stroke="#fff" stroke-width="2.5" fill="none"/></svg>
-                <span>${specLabel(p.name)}</span>
-              </div>`).join('')}
+        const buildCard = (p) => {
+          const hasVal = !!p?.value;
+          return `<div class="cdm-spec-card${hasVal ? '' : ' cdm-spec-empty'}" role="listitem">
+            <div class="cdm-spec-icon">${specIconFA(p.name)}</div>
+            <div class="cdm-spec-text">
+              <div class="cdm-spec-label">${escHtml(p.name)}</div>
+              <div class="cdm-spec-value">${hasVal ? (escHtml(p.value) + (p.unit ? ' ' + escHtml(p.unit) : '')) : '---'}</div>
             </div>
-          </div>` : '';
+          </div>`;
+        };
 
+        const topCards = topParams.map(buildCard).join('');
+        const specCards = sortedRest.map(buildCard).join('');
+
+        const carNameSafe = escHtml(`${car.brand} ${car.model}`);
+        card.setAttribute('aria-label', `Детайли за ${carNameSafe}`);
         card.innerHTML = `
-          <div class="cdm-close-wrap"><button class="cdm-close-btn" id="closeCarModal">✕</button></div>
-          <div class="cdm-layout">
-            <!-- LEFT: Image + price + thumbnails -->
-            <div class="cdm-left">
-              <div class="cdm-title-row">
-                <div>
-                  <h2 class="cdm-car-name">${car.brand} ${car.model}${car.trim ? (' ' + car.trim) : ''}</h2>
-                  <span class="cdm-car-type">${car.type || ''}</span>
+          <button class="cdm-close-btn" id="closeCarModal" aria-label="Затвори">✕</button>
+          <div class="cdm-top">
+            <!-- LEFT: Image + thumbs strip -->
+            <div class="cdm-gallery">
+              <div class="cdm-main-img-wrap">
+                <img id="mainCarImg" src="${mainSrc}" alt="Снимка на ${carNameSafe}" class="cdm-main-img">
+              </div>
+              ${imgs.length > 1 ? `<div class="cdm-thumbs-wrap">
+                <button class="cdm-thumbs-arrow cdm-thumbs-up" id="thumbsUp" aria-label="Предишна снимка"><i class="fa-solid fa-chevron-up"></i></button>
+                <div class="cdm-thumbs" id="cdmThumbsScroll" role="listbox" aria-label="Снимки">
+                  ${imgs.map((im, idx) => {
+                    const s = toSrc(im);
+                    return `<img data-thumb="${idx}" src="${s}" alt="Снимка ${idx+1} на ${carNameSafe}" role="option" aria-selected="${idx===currentIdx}" class="cdm-thumb ${idx===currentIdx?'cdm-thumb-active':''}">`;
+                  }).join('')}
                 </div>
-                <span class="cdm-status" title="${tooltip}" style="${statusStyle}">${statusLabel}</span>
+                <button class="cdm-thumbs-arrow cdm-thumbs-down" id="thumbsDown" aria-label="Следваща снимка"><i class="fa-solid fa-chevron-down"></i></button>
+              </div>` : ''}
+            </div>
+            <!-- RIGHT: Info -->
+            <div class="cdm-info">
+              <div class="cdm-name-row">
+                <h2 class="cdm-car-name" id="cdmCarTitle">${carNameSafe}</h2>
+                <span class="cdm-status" title="${escHtml(tooltip)}" style="${statusStyle}" role="status">${escHtml(statusLabel)}</span>
               </div>
               <div class="cdm-price-row">
-                <span class="cdm-price">€${(car.pricePerDay||0).toFixed(0)}</span>
+                <span class="cdm-price" aria-label="Цена">€${(car.pricePerDay||0).toFixed(0)}</span>
                 <span class="cdm-per">/ ден</span>
               </div>
-              <div class="cdm-main-img-wrap">
-                <img id="mainCarImg" src="${mainSrc}" alt="${car.brand} ${car.model}" class="cdm-main-img">
-              </div>
-              <div class="cdm-thumbs">
-                ${imgs.map((im, idx) => {
-                  const s = toSrc(im);
-                  return `<img data-thumb="${idx}" src="${s}" alt="" class="cdm-thumb ${idx===currentIdx?'cdm-thumb-active':''}">`;
-                }).join('')}
-              </div>
-              ${relRes.length ? `<div class="cdm-reservations">
-                <div class="cdm-res-title">Резервации:</div>
+              ${topCards ? `<div class="cdm-top-specs">${topCards}</div>` : ''}
+              ${available ? `<button class="cdm-reserve-btn" id="reserveFromModal"><i class="fa-solid fa-key"></i> Наеми сега</button>` : ''}
+              ${relRes.length ? `<div class="cdm-reservations" aria-label="Активни резервации">
+                <div class="cdm-res-title">Активни резервации:</div>
                 ${relRes.map(r => {
                   const f = new Date(r.from).toLocaleString('bg-BG', { dateStyle:'short', timeStyle:'short' });
                   const t = new Date(r.to).toLocaleString('bg-BG', { dateStyle:'short', timeStyle:'short' });
-                  return `<div class="cdm-res-line">${f} → ${t}</div>`;
+                  return `<div class="cdm-res-line">${escHtml(f)} → ${escHtml(t)}</div>`;
                 }).join('')}
               </div>` : ''}
             </div>
-            <!-- RIGHT: Specs + Button + Equipment -->
-            <div class="cdm-right">
-              <h3 class="cdm-section-title">Technical Specification</h3>
-              <div class="cdm-specs-grid">
-                ${specCards || '<div class="cdm-spec-card"><div class="cdm-spec-label">Без параметри</div></div>'}
-              </div>
-              ${available ? `<button class="cdm-reserve-btn" id="reserveFromModal">Rent a car</button>` : ''}
-              ${equipHTML}
+          </div>
+          <!-- PARAMETERS full width -->
+          <div class="cdm-params-section">
+            <h3 class="cdm-section-title"><i class="fa-solid fa-sliders" style="font-size:16px;margin-right:8px;color:#6366F1;"></i>Технически Параметри</h3>
+            <div class="cdm-specs-grid" role="list" aria-label="Параметри">
+              ${specCards || '<div class="cdm-spec-card" role="listitem"><div class="cdm-spec-label">Без параметри</div></div>'}
             </div>
           </div>
         `;
@@ -1158,6 +1322,10 @@
             renderContent();
           };
         });
+        // Thumb scroll arrows
+        const thumbsScroll = $('#cdmThumbsScroll', card);
+        $('#thumbsUp', card)?.addEventListener('click', () => { if (thumbsScroll) thumbsScroll.scrollBy({ top: -160, behavior: 'smooth' }); });
+        $('#thumbsDown', card)?.addEventListener('click', () => { if (thumbsScroll) thumbsScroll.scrollBy({ top: 160, behavior: 'smooth' }); });
         $('#reserveFromModal', card)?.addEventListener('click', () => {
           const q = new URLSearchParams({
             car: car.id,
@@ -1191,8 +1359,8 @@
         </div>
       </div>
       <div class="gallery">
-        <div class="img"><img alt="" src="${carPlaceholderSVG(`${car.brand} ${car.model}`, 820, 220, 210)}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;"></div>
-        <div class="img"><img alt="" src="${carPlaceholderSVG('Rear', 420, 220, 230)}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;"></div>
+        <div class="img"><img alt="${escHtml(car.brand)} ${escHtml(car.model)}" src="${carPlaceholderSVG(`${car.brand} ${car.model}`, 820, 220, 210)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;border-radius:12px;"></div>
+        <div class="img"><img alt="${escHtml(car.brand)} ${escHtml(car.model)} – задна страна" src="${carPlaceholderSVG('Rear', 420, 220, 230)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;border-radius:12px;"></div>
       </div>
       <div class="tabs" id="tabs">
         <div class="tab active" data-tab="rent">Детайли за наем</div>
@@ -1496,7 +1664,7 @@
     };
 
     d.innerHTML = `
-      <h2 class="wz-page-title">Резервация</h2>
+      <h1 class="wz-page-title" style="font-size:var(--font-h2);">Резервация</h1>
       ${stepper}
       ${renderCarBadge(car)}
       ${step === 1 ? blockDates : ''}
@@ -1530,7 +1698,7 @@
       const el = $('#wizard-specs');
       if (!el) return;
       const items = (list || []).filter(p => p?.value !== null && p?.value !== '')
-        .map(p => `<div class="wz-spec-item">${wzSpecIcon(p.name)}<span>${p.value}${p.unit ? ' ' + p.unit : ''}</span></div>`).join('');
+        .map(p => `<div class="wz-spec-item">${wzSpecIcon(p.name)}<span>${escHtml(p.value)}${p.unit ? ' ' + escHtml(p.unit) : ''}</span></div>`).join('');
       el.innerHTML = items || '';
     }).catch(()=>{});
 
@@ -2124,10 +2292,90 @@
   function mountAdminIfNeeded(isAdmin = true) {
     if (isAdmin) mountAdminLayout();
   }
+
+  /** Render admin login page */
+  function renderAdminLogin() {
+    app.className = 'landing-wrap';
+    app.innerHTML = `
+      ${siteHeaderHTML('admin')}
+      <div class="admin-login-wrap">
+        <div class="admin-login-card">
+          <div class="admin-login-icon">
+            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 12c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5z"/>
+              <path d="M20 21c0-3.31-3.58-6-8-6s-8 2.69-8 6"/>
+            </svg>
+          </div>
+          <h1 class="admin-login-title">Вход за администратор</h1>
+          <p class="admin-login-subtitle">Моля, въведете вашите данни за достъп</p>
+          <form id="adminLoginForm" class="admin-login-form">
+            <div class="admin-login-field">
+              <label for="adminUser">Потребител</label>
+              <input type="text" id="adminUser" class="input" placeholder="Потребителско име" autocomplete="username" required>
+            </div>
+            <div class="admin-login-field">
+              <label for="adminPass">Парола</label>
+              <input type="password" id="adminPass" class="input" placeholder="Парола" autocomplete="current-password" required>
+            </div>
+            <div id="loginError" class="admin-login-error" style="display:none;">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              Грешно потребителско име или парола
+            </div>
+            <button type="submit" class="btn-primary admin-login-btn">Вход</button>
+          </form>
+          <a href="#/" class="admin-login-back">&larr; Към началната страница</a>
+        </div>
+      </div>
+      ${siteFooterHTML()}
+    `;
+    bindHamburger();
+
+    const form = $('#adminLoginForm');
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const user = $('#adminUser').value.trim();
+      const pass = $('#adminPass').value;
+      const btn = form.querySelector('.admin-login-btn');
+      btn.disabled = true;
+      btn.textContent = 'Проверка...';
+      const result = await loginAdmin(user, pass);
+      btn.disabled = false;
+      btn.textContent = 'Вход';
+      if (result.ok) {
+        location.hash = '#/admin';
+        renderRoute();
+      } else {
+        const err = $('#loginError');
+        if (result.locked) {
+          err.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+            Твърде много неуспешни опити. Опитайте отново след ${result.seconds} сек.`;
+        } else {
+          err.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+            Грешно потребителско име или парола (остават ${result.remaining ?? 0} опита)`;
+        }
+        err.style.display = 'flex';
+        $('#adminPass').value = '';
+        $('#adminPass').focus();
+      }
+    };
+    // Auto-focus username
+    $('#adminUser').focus();
+    // Show lockout message if already locked
+    if (_isLoginLocked()) {
+      const err = $('#loginError');
+      err.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        Твърде много неуспешни опити. Опитайте отново след ${_getLockRemainingSeconds()} сек.`;
+      err.style.display = 'flex';
+    }
+  }
   function adminNav(active) {
     return `
       <div class="header">
         <h2>Административен панел</h2>
+        <button class="btn-logout" onclick="(${logoutAdmin.toString()})()">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Изход
+        </button>
       </div>
       <div class="panel" style="padding:12px; margin:12px 0;">
         <div class="toolbar" style="border:0; padding:0;">
@@ -2241,9 +2489,9 @@
         if (paidTbody) {
           paidTbody.innerHTML = paid.length
             ? paid.map(p => `<tr>
-                <td>${p.seq ?? ''}</td>
-                <td>${p.car?.brand||''} ${p.car?.model||''}</td>
-                <td>${p.driverName||''}</td>
+                <td>${escHtml(p.seq ?? '')}</td>
+                <td>${escHtml(p.car?.brand||'')} ${escHtml(p.car?.model||'')}</td>
+                <td>${escHtml(p.driverName||'')}</td>
                 <td>€${Number(p.total||0).toFixed(2)}</td>
                 <td>${fmtDate(p.from)}</td>
                 <td>${fmtDate(p.to)}</td>
@@ -2254,9 +2502,9 @@
         if (pendTbody) {
           pendTbody.innerHTML = pending.length
             ? pending.map(p => `<tr>
-                <td>${p.seq ?? ''}</td>
-                <td>${p.car?.brand||''} ${p.car?.model||''}</td>
-                <td>${p.driverName||''}</td>
+                <td>${escHtml(p.seq ?? '')}</td>
+                <td>${escHtml(p.car?.brand||'')} ${escHtml(p.car?.model||'')}</td>
+                <td>${escHtml(p.driverName||'')}</td>
                 <td><span class="tag">Заявка</span></td>
                 <td><a class="btn-secondary" href="#/admin/reservations" style="height:32px;display:grid;place-items:center;">Управление</a></td>
               </tr>`).join('')
@@ -2431,7 +2679,7 @@
               ${(() => {
                 const src = getSrc(im);
                 return src
-                  ? `<img src="${src}" alt="" style="width:100%;height:120px;object-fit:cover;">`
+                  ? `<img src="${src}" alt="Снимка на кола" loading="lazy" style="width:100%;height:120px;object-fit:cover;">`
                   : `<div style="width:100%;height:120px;display:grid;place-items:center;background:#f6f7f9;color:#9aa4b2;">Неподдържан формат</div>`;
               })()}
               <div style="padding:8px;">
@@ -2537,6 +2785,12 @@
           btn.disabled = true; const prevText = btn.textContent; btn.textContent = 'Запис...';
           try {
             if (!$('#cBrand').value.trim() || !$('#cModel').value.trim()) throw new Error('Моля, попълнете Марка и Модел');
+            // Sync car.type from 'Вид кола' param before saving basics
+            const vidKolaDef = defs.find(d => d.name === 'Вид кола');
+            if (vidKolaDef) {
+              const el = $(`[data-param="${vidKolaDef.id}"]`);
+              if (el && el.value) car.type = el.value;
+            }
             await saveBasics(isNew);
             if (!car.id) throw new Error('Създаването не беше успешно.');
             // Save params
@@ -2744,8 +2998,8 @@
         return `
         <tr data-res="${r.id}" class="row-status-${r.status}">
           <td>${seqVal}</td>
-          <td>${(r.car?.brand||'').trim()} ${(r.car?.model||'').trim() || r.carId || ''}</td>
-          <td>${r.driverName||r.driver?.name||''}</td>
+          <td>${escHtml((r.car?.brand||'').trim())} ${escHtml((r.car?.model||'').trim() || r.carId || '')}</td>
+          <td>${escHtml(r.driverName||r.driver?.name||'')}</td>
           <td>${period}</td>
           <td>${days}</td>
           <td>${r.total ? `€${Number(r.total).toFixed(2)}` : '—'}</td>
@@ -2819,30 +3073,30 @@
           const days = (() => { const a=new Date(r.from), b=new Date(r.to); return Math.max(1, Math.ceil((b-a)/86400000)); })();
           $('#resModalBody', wrap).innerHTML = `
             <div style="display:grid; gap:8px;">
-              <div><strong>№:</strong> ${r.seq ?? ''}</div>
-              <div><strong>Кола:</strong> ${r.car?.brand||''} ${r.car?.model||r.carId||''}</div>
+              <div><strong>№:</strong> ${escHtml(r.seq ?? '')}</div>
+              <div><strong>Кола:</strong> ${escHtml(r.car?.brand||'')} ${escHtml(r.car?.model||r.carId||'')}</div>
               <div><strong>Период:</strong> ${fmtDate(r.from)} → ${fmtDate(r.to)} (${days} дни)</div>
-              <div><strong>Взимане:</strong> ${r.pickPlace || ''}</div>
-              <div><strong>Връщане:</strong> ${r.dropPlace || ''}</div>
-              <div><strong>Шофьор:</strong> ${r.driverName||''}, тел: ${r.driverPhone||''}, имейл: ${r.driverEmail||''}</div>
-              <div><strong>Статус:</strong> ${statusLabel(r.status)}</div>
-              <div><strong>Сума:</strong> ${r.total ? '€'+r.total : '—'}</div>
+              <div><strong>Взимане:</strong> ${escHtml(r.pickPlace || '')}</div>
+              <div><strong>Връщане:</strong> ${escHtml(r.dropPlace || '')}</div>
+              <div><strong>Шофьор:</strong> ${escHtml(r.driverName||'')}, тел: ${escHtml(r.driverPhone||'')}, имейл: ${escHtml(r.driverEmail||'')}</div>
+              <div><strong>Статус:</strong> ${escHtml(statusLabel(r.status))}</div>
+              <div><strong>Сума:</strong> ${r.total ? '€'+escHtml(r.total) : '—'}</div>
               <hr>
-              <div><strong>${r.status==='paid' ? 'Фактура' : 'Проформа'}</strong> (${r.invoiceType || ''})</div>
+              <div><strong>${r.status==='paid' ? 'Фактура' : 'Проформа'}</strong> (${escHtml(r.invoiceType || '')})</div>
               ${r.invoiceType==='company' ? `
-                <div>Фирма: ${r.invoiceName||''}</div>
-                <div>ЕИК: ${r.invoiceNum||''} ДДС: ${r.invoiceVat||''}</div>
-                <div>МОЛ: ${r.invoiceMol||''}</div>
-                <div>Адрес: ${r.invoiceAddr||''}</div>
-                <div>Имейл: ${r.invoiceEmail||''}</div>
-                <div>Банка: ${r.invoiceBank||''}</div>
-                <div>IBAN: ${r.invoiceIban||''}</div>
-                <div>BIC: ${r.invoiceBic||''}</div>
+                <div>Фирма: ${escHtml(r.invoiceName||'')}</div>
+                <div>ЕИК: ${escHtml(r.invoiceNum||'')} ДДС: ${escHtml(r.invoiceVat||'')}</div>
+                <div>МОЛ: ${escHtml(r.invoiceMol||'')}</div>
+                <div>Адрес: ${escHtml(r.invoiceAddr||'')}</div>
+                <div>Имейл: ${escHtml(r.invoiceEmail||'')}</div>
+                <div>Банка: ${escHtml(r.invoiceBank||'')}</div>
+                <div>IBAN: ${escHtml(r.invoiceIban||'')}</div>
+                <div>BIC: ${escHtml(r.invoiceBic||'')}</div>
               ` : `
-                <div>Име: ${r.invoiceName||''}</div>
-                <div>ЕГН: ${r.invoiceEgn||''}</div>
-                <div>Адрес: ${r.invoiceAddr||''}</div>
-                <div>Имейл: ${r.invoiceEmail||''}</div>
+                <div>Име: ${escHtml(r.invoiceName||'')}</div>
+                <div>ЕГН: ${escHtml(r.invoiceEgn||'')}</div>
+                <div>Адрес: ${escHtml(r.invoiceAddr||'')}</div>
+                <div>Имейл: ${escHtml(r.invoiceEmail||'')}</div>
               `}
             </div>
           `;
@@ -3059,12 +3313,12 @@
       const rows = items.map(it => `
         <tr>
           <td>
-            <div class="desc">${it.description}</div>
+            <div class="desc">${escHtml(it.description)}</div>
             <div class="meta">${reservation.from ? fmtDate(reservation.from) : ''}${reservation.to ? ' → ' + fmtDate(reservation.to) : ''}</div>
           </td>
-          <td class="center">${it.qty}</td>
+          <td class="center">${escHtml(it.qty)}</td>
           <td class="num">${fmtMoney(it.unitPrice)}</td>
-          <td class="center">${it.vatRate}%</td>
+          <td class="center">${escHtml(it.vatRate)}%</td>
           <td class="num">${fmtMoney(it.totalNet)}</td>
           <td class="num">${fmtMoney(it.totalVat)}</td>
           <td class="num">${fmtMoney(it.totalGross)}</td>
@@ -3080,8 +3334,8 @@
             <div class="invoice-brand">
               <div class="invoice-logo" aria-label="logo">🚗</div>
               <div>
-                <div style="font-weight:700; font-size:16px;">${sup.name || 'Company'}</div>
-                <div style="color:#6B7280; font-size:12px;">${sup.email || ''}</div>
+                <div style="font-weight:700; font-size:16px;">${escHtml(sup.name || 'Company')}</div>
+                <div style="color:#6B7280; font-size:12px;">${escHtml(sup.email || '')}</div>
               </div>
             </div>
             <div class="invoice-title">${payload.type==='INVOICE'?'ФАКТУРА':'ПРОФОРМА'}</div>
@@ -3098,27 +3352,27 @@
           <div class="invoice-parties">
             <div class="party-card">
               <h4>Доставчик</h4>
-              <div class="name">${sup.name}</div>
-              <div class="party-row"><span class="icon">🆔</span><span>ЕИК: ${sup.eik || '—'} ${sup.vat ? ' | ДДС №: '+sup.vat : ''}</span></div>
-              <div class="party-row"><span class="icon">👤</span><span>МОЛ: ${sup.mol || '—'}</span></div>
-              <div class="party-row"><span class="icon">📍</span><span>${sup.addr || '—'}</span></div>
-              <div class="party-row"><span class="icon">✉️</span><span>${sup.email || '—'}</span></div>
-              <div class="party-row"><span class="icon">📞</span><span>${sup.phone || '—'}</span></div>
-              <div class="party-row"><span class="icon">🏦</span><span>${sup.bank || '—'}</span></div>
-              <div class="party-row"><span class="icon">💳</span><span>IBAN: ${sup.iban || '—'} | BIC: ${sup.bic || '—'}</span></div>
+              <div class="name">${escHtml(sup.name)}</div>
+              <div class="party-row"><span class="icon">🆔</span><span>ЕИК: ${escHtml(sup.eik || '—')} ${sup.vat ? ' | ДДС №: '+escHtml(sup.vat) : ''}</span></div>
+              <div class="party-row"><span class="icon">👤</span><span>МОЛ: ${escHtml(sup.mol || '—')}</span></div>
+              <div class="party-row"><span class="icon">📍</span><span>${escHtml(sup.addr || '—')}</span></div>
+              <div class="party-row"><span class="icon">✉️</span><span>${escHtml(sup.email || '—')}</span></div>
+              <div class="party-row"><span class="icon">📞</span><span>${escHtml(sup.phone || '—')}</span></div>
+              <div class="party-row"><span class="icon">🏦</span><span>${escHtml(sup.bank || '—')}</span></div>
+              <div class="party-row"><span class="icon">💳</span><span>IBAN: ${escHtml(sup.iban || '—')} | BIC: ${escHtml(sup.bic || '—')}</span></div>
             </div>
             <div class="party-card">
               <h4>Получател</h4>
-              <div class="name">${payload.buyerName || ''}</div>
+              <div class="name">${escHtml(payload.buyerName || '')}</div>
               <div class="party-row"><span class="icon">🆔</span><span>${payload.buyerType==='company'
-                ? `ЕИК: ${payload.buyerEik || '—'} ${payload.buyerVat ? ' | ДДС №: '+payload.buyerVat : ''}`
-                : `ЕГН: ${payload.buyerEgn || '—'}`}</span></div>
-              ${payload.buyerMol ? `<div class="party-row"><span class="icon">👤</span><span>МОЛ: ${payload.buyerMol}</span></div>` : ''}
-              <div class="party-row"><span class="icon">📍</span><span>${payload.buyerAddr || '—'}</span></div>
-              <div class="party-row"><span class="icon">✉️</span><span>${payload.buyerEmail || '—'}</span></div>
+                ? `ЕИК: ${escHtml(payload.buyerEik || '—')} ${payload.buyerVat ? ' | ДДС №: '+escHtml(payload.buyerVat) : ''}`
+                : `ЕГН: ${escHtml(payload.buyerEgn || '—')}`}</span></div>
+              ${payload.buyerMol ? `<div class="party-row"><span class="icon">👤</span><span>МОЛ: ${escHtml(payload.buyerMol)}</span></div>` : ''}
+              <div class="party-row"><span class="icon">📍</span><span>${escHtml(payload.buyerAddr || '—')}</span></div>
+              <div class="party-row"><span class="icon">✉️</span><span>${escHtml(payload.buyerEmail || '—')}</span></div>
               ${(payload.buyerBank || payload.buyerIban || payload.buyerBic) ? `
-                <div class="party-row"><span class="icon">🏦</span><span>${payload.buyerBank || '—'}</span></div>
-                <div class="party-row"><span class="icon">💳</span><span>IBAN: ${payload.buyerIban || '—'} | BIC: ${payload.buyerBic || '—'}</span></div>
+                <div class="party-row"><span class="icon">🏦</span><span>${escHtml(payload.buyerBank || '—')}</span></div>
+                <div class="party-row"><span class="icon">💳</span><span>IBAN: ${escHtml(payload.buyerIban || '—')} | BIC: ${escHtml(payload.buyerBic || '—')}</span></div>
               ` : ''}
             </div>
           </div>
@@ -3862,6 +4116,11 @@
   function mountVehiclesPage() {
     app.className = 'landing-wrap';
 
+    // Read ?type= parameter from hash URL (e.g. #/vehicles?type=Джип)
+    const hashQuery = (location.hash.split('?')[1]) || '';
+    const hashParams = new URLSearchParams(hashQuery);
+    const urlType = hashParams.get('type');
+
     // Resolve type options from params
     const typeDef = (paramDefs || []).find(p => p.name === 'Вид кола' && p.type === 'ENUM');
     const typeOpts = typeDef?.options && Array.isArray(typeDef.options) && typeDef.options.length
@@ -3873,6 +4132,13 @@
     // Only show car types that actually have at least one car
     const existingTypes = [...new Set(cars.map(c => c.type).filter(Boolean))];
     const activeTypeOpts = typeOpts.filter(t => existingTypes.includes(t));
+
+    // If a valid type was passed via URL, set it as the active tab
+    if (urlType && activeTypeOpts.includes(urlType)) {
+      vpActiveTab = urlType;
+    } else if (!urlType) {
+      vpActiveTab = 'all';
+    }
 
     // Font Awesome icon mapping for car types
     const typeIconFA = (type) => {
@@ -3907,7 +4173,7 @@
       ${siteHeaderHTML('vehicles')}
 
       <!-- FILTER BAR -->
-      <div class="vp-filter-wrap">
+      <div class="vp-filter-wrap" id="main-content">
         <div class="hero-booking" id="vpFilterBar" style="max-width:100%;margin:0 auto;">
           <h2>Book your car</h2>
         </div>
@@ -3915,9 +4181,10 @@
 
       <!-- TABS + GRID -->
       <div class="vp-tabs">
-        <h2 class="vp-tabs-title">Селектирай по тип кола</h2>
-        <div class="vp-tabs-row" id="vpTabs">
-          ${tabs.map(t => `<button class="vp-tab ${t.id === vpActiveTab ? 'active' : ''}" data-tab="${t.id}">${t.icon} ${t.label}</button>`).join('')}
+        <h1 class="vp-tabs-title" style="font-size:var(--font-h2);">АвтоПарк</h1>
+        <h2 class="vp-tabs-subtitle" style="font-size:16px;font-weight:500;color:#6B7280;margin:4px 0 12px;">Селектирай по тип кола</h2>
+        <div class="vp-tabs-row" id="vpTabs" role="tablist" aria-label="Филтър по тип кола">
+          ${tabs.map(t => `<button class="vp-tab ${t.id === vpActiveTab ? 'active' : ''}" data-tab="${t.id}" role="tab" aria-selected="${t.id === vpActiveTab}">${t.icon} ${t.label}</button>`).join('')}
         </div>
       </div>
 
@@ -3933,10 +4200,14 @@
     // Render filter bar
     renderVpFilters(gearOpts);
 
-    // Tab clicks
+    // Tab clicks (with aria-selected)
     $$('.vp-tab').forEach(btn => btn.onclick = () => {
       vpActiveTab = btn.getAttribute('data-tab');
-      $$('.vp-tab').forEach(b => b.classList.toggle('active', b.getAttribute('data-tab') === vpActiveTab));
+      $$('.vp-tab').forEach(b => {
+        const isActive = b.getAttribute('data-tab') === vpActiveTab;
+        b.classList.toggle('active', isActive);
+        b.setAttribute('aria-selected', String(isActive));
+      });
       renderVpResults();
     });
 
@@ -4029,13 +4300,18 @@
     grid.innerHTML = '';
 
     if (!list.length) {
-      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:48px 0;color:#9CA3AF;font-size:16px;">Няма намерени автомобили за тези филтри.</div>';
+      grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:48px 24px;">
+        <i class="fa-solid fa-car-burst" style="font-size:48px;color:#D1D5DB;margin-bottom:16px;display:block;"></i>
+        <p style="font-size:18px;font-weight:600;color:#374151;margin:0 0 8px;">Няма намерени автомобили</p>
+        <p style="font-size:14px;color:#6B7280;margin:0;">Опитайте с различни филтри или период.</p>
+      </div>`;
       return;
     }
 
     list.forEach((c) => {
       const card = document.createElement('article');
       card.className = 'cc';
+      card.setAttribute('aria-label', `${escHtml(c.brand)} ${escHtml(c.model)}`);
       const firstImg = (() => {
         const im = (c.images || [])[0];
         const p = im && (im.thumb || im.large);
@@ -4045,15 +4321,15 @@
       card.innerHTML = `
         <div class="cc-img" data-car-details="${c.id}">
           ${firstImg
-            ? `<img alt="${c.brand} ${c.model}" src="${firstImg}" loading="lazy" class="cc-photo">`
-            : `<svg viewBox="0 0 400 200" class="cc-sil"><path d="M50 140 Q60 100 120 90 L160 70 Q200 55 260 70 L310 90 Q360 100 370 140 Z" fill="#9CA3AF"/><circle cx="120" cy="150" r="22" fill="#6B7280"/><circle cx="120" cy="150" r="12" fill="#D1D5DB"/><circle cx="310" cy="150" r="22" fill="#6B7280"/><circle cx="310" cy="150" r="12" fill="#D1D5DB"/><rect x="40" y="140" width="340" height="6" rx="3" fill="#9CA3AF"/></svg>`
+            ? `<img alt="${escHtml(c.brand)} ${escHtml(c.model)}" src="${firstImg}" loading="lazy" class="cc-photo">`
+            : `<svg viewBox="0 0 400 200" class="cc-sil" role="img" aria-label="${escHtml(c.brand)} ${escHtml(c.model)}"><path d="M50 140 Q60 100 120 90 L160 70 Q200 55 260 70 L310 90 Q360 100 370 140 Z" fill="#9CA3AF"/><circle cx="120" cy="150" r="22" fill="#6B7280"/><circle cx="120" cy="150" r="12" fill="#D1D5DB"/><circle cx="310" cy="150" r="22" fill="#6B7280"/><circle cx="310" cy="150" r="12" fill="#D1D5DB"/><rect x="40" y="140" width="340" height="6" rx="3" fill="#9CA3AF"/></svg>`
           }
         </div>
         <div class="cc-body">
           <div class="cc-head">
             <div>
-              <h3 class="cc-name" data-car-details="${c.id}">${c.brand} ${c.model}</h3>
-              <p class="cc-type">${c.type || ''}</p>
+              <h3 class="cc-name" data-car-details="${c.id}">${escHtml(c.brand)} ${escHtml(c.model)}</h3>
+              <p class="cc-type">${escHtml(c.type || '')}</p>
             </div>
             <div class="cc-price-block">
               <span class="cc-price">€${priceDay.toFixed(0)}</span>
@@ -4129,7 +4405,7 @@
       ${siteHeaderHTML('about-us')}
 
       <!-- ABOUT HERO -->
-      <section class="au-hero">
+      <section class="au-hero" id="main-content">
         <h1 class="au-hero-title">За нас</h1>
         <p class="au-hero-breadcrumb"><a href="#/">Начало</a> / За нас</p>
       </section>
@@ -4296,56 +4572,56 @@
         <h2 class="au-faq-title">Често задавани въпроси</h2>
         <div class="au-faq-list" id="auFaqList">
           <div class="au-faq-item open">
-            <button class="au-faq-q">
+            <button class="au-faq-q" aria-expanded="true" aria-controls="faq-a-1">
               <span>Как мога да резервирам автомобил?</span>
               <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
             </button>
-            <div class="au-faq-a">
+            <div class="au-faq-a" id="faq-a-1" role="region">
               <p>Резервацията е бърза и лесна — изберете автомобил от нашия автопарк, посочете дати за наемане и връщане, попълнете данните си и изпратете заявка. Ще се свържем с вас за потвърждение и подробности за плащането по банков път.</p>
             </div>
           </div>
           <div class="au-faq-item">
-            <button class="au-faq-q">
+            <button class="au-faq-q" aria-expanded="false" aria-controls="faq-a-2">
               <span>Какъв е начинът на плащане?</span>
               <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
             </button>
-            <div class="au-faq-a">
+            <div class="au-faq-a" id="faq-a-2" role="region">
               <p>Плащането се извършва единствено по банков път. След потвърждение на резервацията ще получите проформа фактура с банковите реквизити. Наемът се счита за потвърден след получаване на плащането по нашата банкова сметка.</p>
             </div>
           </div>
           <div class="au-faq-item">
-            <button class="au-faq-q">
+            <button class="au-faq-q" aria-expanded="false" aria-controls="faq-a-3">
               <span>Какви документи са необходими за наемане?</span>
               <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
             </button>
-            <div class="au-faq-a">
+            <div class="au-faq-a" id="faq-a-3" role="region">
               <p>Необходими са валидна шофьорска книжка (минимум 2 години стаж), лична карта или паспорт и навършени 21 години. За чуждестранни граждани може да се изисква международна шофьорска книжка.</p>
             </div>
           </div>
           <div class="au-faq-item">
-            <button class="au-faq-q">
+            <button class="au-faq-q" aria-expanded="false" aria-controls="faq-a-4">
               <span>Включена ли е застраховка в цената на наема?</span>
               <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
             </button>
-            <div class="au-faq-a">
+            <div class="au-faq-a" id="faq-a-4" role="region">
               <p>Да, всички наши автомобили са с пълна застраховка „Гражданска отговорност" и „Каско". Допълнителни покрития и пътна помощ могат да бъдат уговорени при резервацията.</p>
             </div>
           </div>
           <div class="au-faq-item">
-            <button class="au-faq-q">
+            <button class="au-faq-q" aria-expanded="false" aria-controls="faq-a-5">
               <span>Мога ли да удължа наемния период?</span>
               <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
             </button>
-            <div class="au-faq-a">
+            <div class="au-faq-a" id="faq-a-5" role="region">
               <p>Да, можете да удължите наемния период, като се свържете с нас поне 24 часа преди крайната дата. Удължаването подлежи на наличност и се заплаща допълнително по банков път. Ще получите актуализирана фактура.</p>
             </div>
           </div>
           <div class="au-faq-item">
-            <button class="au-faq-q">
+            <button class="au-faq-q" aria-expanded="false" aria-controls="faq-a-6">
               <span>Какви са условията за анулиране на резервация?</span>
               <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
             </button>
-            <div class="au-faq-a">
+            <div class="au-faq-a" id="faq-a-6" role="region">
               <p>Безплатно анулиране е възможно до 48 часа преди началото на наемния период. При по-късно анулиране може да бъде удържана неустойка съгласно общите условия. Възстановяването на сумата се извършва по банков път.</p>
             </div>
           </div>
@@ -4368,15 +4644,22 @@
     `;
     bindHamburger();
 
-    // FAQ accordion
+    // FAQ accordion (with aria-expanded)
     const faqList = $('#auFaqList');
     if (faqList) {
       faqList.querySelectorAll('.au-faq-q').forEach(btn => {
         btn.addEventListener('click', () => {
           const item = btn.closest('.au-faq-item');
           const wasOpen = item.classList.contains('open');
-          faqList.querySelectorAll('.au-faq-item').forEach(i => i.classList.remove('open'));
-          if (!wasOpen) item.classList.add('open');
+          faqList.querySelectorAll('.au-faq-item').forEach(i => {
+            i.classList.remove('open');
+            const b = i.querySelector('.au-faq-q');
+            if (b) b.setAttribute('aria-expanded', 'false');
+          });
+          if (!wasOpen) {
+            item.classList.add('open');
+            btn.setAttribute('aria-expanded', 'true');
+          }
         });
       });
     }
@@ -4616,7 +4899,7 @@
             <div class="pol-section-icon"><i class="fa-solid ${sec.icon}"></i></div>
             <h2 class="pol-section-title">${title}</h2>
           </div>
-          <div class="pol-section-body">${content}</div>
+          <div class="pol-section-body">${resolvePolicyPlaceholders(content)}</div>
         </div>
       `;
     }).join('');
@@ -4925,6 +5208,21 @@
     loadPolicies().then(() => showPolicy(currentSlug));
   }
 
+  /** Force-scroll to top — bypasses CSS scroll-behavior:smooth */
+  function scrollToTop() {
+    document.documentElement.style.scrollBehavior = 'auto';
+    document.body.style.scrollBehavior = 'auto';
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.scrollTo(0, 0);
+    requestAnimationFrame(() => {
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      document.documentElement.style.scrollBehavior = '';
+      document.body.style.scrollBehavior = '';
+    });
+  }
+
   function renderRoute() {
     const hash = location.hash || '#/';
     // "Контакти" — scroll to footer on any page
@@ -4932,27 +5230,28 @@
       const ft = document.getElementById('footer');
       if (ft) { ft.scrollIntoView({ behavior: 'smooth' }); return; }
     }
-    // Scroll to top on every page navigation
-    window.scrollTo(0, 0);
     if (hash.startsWith('#/admin')) {
+      // If not logged in, show login form
+      if (!isAdminLoggedIn()) { renderAdminLogin(); scrollToTop(); return; }
       const path = hash.split('?')[0];
-      if (path === '#/admin' || path === '#/admin/') return renderAdminDashboard();
-      if (path === '#/admin/cars') return renderAdminCars();
-      if (path === '#/admin/params') return renderAdminParams();
-      if (path === '#/admin/settings') return renderAdminSettings();
-      if (path === '#/admin/reservations') return renderAdminReservations();
-      if (path === '#/admin/invoices') return renderAdminInvoices();
-      if (path === '#/admin/policies') return renderAdminPolicies();
-      return renderAdminDashboard();
+      if (path === '#/admin' || path === '#/admin/') { renderAdminDashboard(); scrollToTop(); return; }
+      if (path === '#/admin/cars') { renderAdminCars(); scrollToTop(); return; }
+      if (path === '#/admin/params') { renderAdminParams(); scrollToTop(); return; }
+      if (path === '#/admin/settings') { renderAdminSettings(); scrollToTop(); return; }
+      if (path === '#/admin/reservations') { renderAdminReservations(); scrollToTop(); return; }
+      if (path === '#/admin/invoices') { renderAdminInvoices(); scrollToTop(); return; }
+      if (path === '#/admin/policies') { renderAdminPolicies(); scrollToTop(); return; }
+      renderAdminDashboard(); scrollToTop(); return;
     }
-    if (hash.startsWith('#/reserve')) return renderWizard();
-    if (hash.startsWith('#/vehicles')) { mountVehiclesPage(); return; }
-    if (hash.startsWith('#/about-us')) { mountAboutUsPage(); return; }
-    if (hash.startsWith('#/policies')) { mountPoliciesPage(); return; }
+    if (hash.startsWith('#/reserve')) { renderWizard(); scrollToTop(); return; }
+    if (hash.startsWith('#/vehicles')) { mountVehiclesPage(); scrollToTop(); return; }
+    if (hash.startsWith('#/about-us')) { mountAboutUsPage(); scrollToTop(); return; }
+    if (hash.startsWith('#/policies')) { mountPoliciesPage(); scrollToTop(); return; }
     // default home
     mountSearchLayout();
     renderFilters();
     applyFilters();
+    scrollToTop();
   }
 
   // Kickoff router

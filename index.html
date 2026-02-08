@@ -1,20 +1,59 @@
 <!doctype html>
-<html lang="en">
+<html lang="bg">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#6366F1">
-    <title>Car Rental – Sample Home</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com 'unsafe-inline'; font-src https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: http://localhost:5175; connect-src 'self' http://localhost:5175;">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta http-equiv="X-Frame-Options" content="DENY">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <meta name="description" content="Meniar.com – Наем на автомобили в България. Широк автопарк, прозрачни цени, бърза онлайн резервация. Леки коли, джипове, бусове.">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://meniar.com/">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Meniar.com – Наем на автомобили">
+    <meta property="og:description" content="Широк автопарк, прозрачни цени, бърза онлайн резервация. Леки коли, джипове, бусове.">
+    <meta property="og:url" content="https://meniar.com/">
+    <meta property="og:locale" content="bg_BG">
+    <meta property="og:site_name" content="Meniar.com">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Meniar.com – Наем на автомобили">
+    <meta name="twitter:description" content="Широк автопарк, прозрачни цени, бърза онлайн резервация.">
+
+    <title>Meniar.com – Наем на автомобили | Рент-а-кар България</title>
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="./styles.css">
+
+    <!-- Structured Data (JSON-LD) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "AutoRental",
+      "name": "Meniar.com",
+      "description": "Наем на автомобили в България – леки коли, джипове, бусове.",
+      "url": "https://meniar.com/",
+      "telephone": "+359888810469",
+      "address": {
+        "@type": "PostalAddress",
+        "addressCountry": "BG"
+      },
+      "priceRange": "€€"
+    }
+    </script>
   </head>
   <body>
-    <div id="app" class="app"></div>
+    <!-- Skip to main content (accessibility) -->
+    <a href="#main-content" class="skip-link">Към основното съдържание</a>
+    <div id="app" class="app" role="main"></div>
     <script src="./app.js"></script>
   </body>
 </html>
-
-
