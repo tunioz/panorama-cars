@@ -22,7 +22,8 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5174';
 app.use(cors({ origin: true, credentials: true }));
 app.options('*', cors({ origin: true, credentials: true }));
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: false  // CSP is set via meta tag in index.html
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('dev'));
@@ -800,8 +801,22 @@ app.put('/api/policies/:slug', async (req, res) => {
   res.json(saved);
 });
 
-app.listen(PORT, () => {
-  console.log(`API listening on http://localhost:${PORT}`);
+// ─── Serve static frontend in production ───────────────────────────
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const FRONTEND_DIR = path.resolve(__dirname, '..', '..');  // repo root
+
+// Serve frontend static files (index.html, app.js, styles.css, design.json, etc.)
+app.use(express.static(FRONTEND_DIR, { index: false }));
+
+// SPA catch-all: any route that doesn't match API/uploads → serve index.html
+app.get('*', (req, res) => {
+  res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server listening on http://0.0.0.0:${PORT}`);
 });
 
 
