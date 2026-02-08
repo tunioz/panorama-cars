@@ -1,12 +1,11 @@
 {
-  "name": "car-rental-ui",
+  "name": "meniar-car-rental",
   "version": "1.0.0",
   "private": true,
-  "description": "Static UI + API dev helpers",
-  "type": "module",
+  "description": "Meniar.com – Car Rental SPA + Express API",
   "scripts": {
-    "dev:frontend": "python3 -m http.server 5174",
-    "dev:api": "node server/src/server.js",
-    "backup:git": "git add -A && git commit -m \"backup: dev snapshot\" && git push"
+    "setup": "cd server && npm install && npx prisma generate",
+    "dev": "cd server && npx nodemon src/server.js",
+    "deploy": "git add -A && git diff --cached --quiet || git commit -m \"deploy: $(date +%Y-%m-%d_%H:%M)\" && git push origin main"
   }
 }

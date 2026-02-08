@@ -2,9 +2,8 @@
 (async function () {
   const app = document.getElementById('app');
   const design = await fetch('./design.json').then(r => r.json()).catch(() => null);
-  const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? 'http://localhost:5175'
-    : '';  // same origin in production
+  // Same origin — Express serves both frontend and API on the same port
+  const API_BASE = '';
 
   // Map tokens to CSS variables
   function applyTokens(tokens) {
