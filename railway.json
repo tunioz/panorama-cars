@@ -5,7 +5,7 @@
     "buildCommand": "cd server && npm install && npx prisma generate"
   },
   "deploy": {
-    "startCommand": "cd server && npx prisma migrate deploy && node src/server.js",
+    "startCommand": "cd server && DATABASE_URL=file:./prisma/dev.db npx prisma migrate deploy && DATABASE_URL=file:./prisma/dev.db node src/server.js",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
