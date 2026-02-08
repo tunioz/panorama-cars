@@ -1,57 +1,37 @@
-import { Card, CardContent } from "./ui/card";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faCalendarCheck, faCouch, faPiggyBank } from "@fortawesome/free-solid-svg-icons";
 
-const features = [
+const items = [
   {
-    title: "Real-time availability",
-    description: "Inventory synced across locations with instant confirmation.",
-    icon: "🚗",
+    icon: faCalendarCheck,
+    title: "Availability",
+    desc: "Ehem tincidunt tincidunt erat at semper fermentum sit divenus gat.",
   },
   {
-    title: "Transparent pricing",
-    description: "No hidden fees. Taxes and insurance shown upfront.",
-    icon: "💳",
+    icon: faCouch,
+    title: "Comfort",
+    desc: "Gravida auctor fermentum morbi adipiscing id egerasecorsen't accumsan.",
   },
   {
-    title: "Premium support",
-    description: "24/7 concierge for quick pickups and returns.",
-    icon: "🕑",
+    icon: faPiggyBank,
+    title: "Savings",
+    desc: "Proin car centralia sceleris and commodo vehicula tortor lobortis vivpelat.",
   },
 ];
 
 export function Features() {
   return (
-    <section className="bg-surface-muted">
-      <div className="mx-auto max-w-[1440px] px-6 py-14">
-        <div className="space-y-2">
-          <p className="text-sm font-semibold uppercase tracking-wide text-primary-600">
-            Why choose us
-          </p>
-          <h2 className="text-3xl font-bold text-text-primary">
-            Designed for seamless rentals
-          </h2>
-          <p className="max-w-2xl text-text-secondary">
-            Feature cards with consistent 24px padding, subtle elevation, and
-            rounded corners as in the Figma block.
-          </p>
-        </div>
-        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {features.map((feature) => (
-            <Card
-              key={feature.title}
-              className="overflow-hidden rounded-[12px] border border-border bg-surface shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md"
-            >
-              <CardContent className="space-y-3 p-6">
-                <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary-50 text-2xl">
-                  {feature.icon}
-                </div>
-                <h3 className="text-lg font-semibold text-text-primary">
-                  {feature.title}
-                </h3>
-                <p className="text-sm text-text-secondary">
-                  {feature.description}
-                </p>
-              </CardContent>
-            </Card>
+    <section className="py-16 md:py-20 bg-white">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="grid sm:grid-cols-3 gap-10 text-center">
+          {items.map((f) => (
+            <div key={f.title} className="flex flex-col items-center gap-4">
+              <div className="w-16 h-16 rounded-full bg-brand-50 flex items-center justify-center">
+                <FontAwesomeIcon icon={f.icon} className="text-brand-500 text-2xl" />
+              </div>
+              <h3 className="text-lg font-bold text-gray-900">{f.title}</h3>
+              <p className="text-sm text-gray-500 max-w-xs">{f.desc}</p>
+            </div>
           ))}
         </div>
       </div>

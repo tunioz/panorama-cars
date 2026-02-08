@@ -1,128 +1,118 @@
-import { CarCard } from "./CarCard";
+"use client";
 
-type Car = {
-  id: string;
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faGear,
+  faGasPump,
+  faSnowflake,
+  faArrowRight,
+} from "@fortawesome/free-solid-svg-icons";
+
+interface CarData {
   name: string;
-  pricePerDay: number;
-  image: string;
-  specs: string[];
-  tag?: string;
-  rating?: number;
-  reviewsCount?: number;
-};
+  type: string;
+  price: number;
+  transmission: string;
+  fuel: string;
+  ac: boolean;
+  image: string | null;
+}
 
-const cars: Car[] = [
-  {
-    id: "ford-focus-stline-115cv",
-    name: "Ford Focus ST Line",
-    pricePerDay: 149,
-    image:
-      "https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?auto=format&fit=crop&w=800&q=80",
-    specs: ["Hatchback", "Manual", "Diesel", "5 seats"],
-    rating: 4.7,
-    reviewsCount: 305,
-  },
-  {
-    id: "bmw-x5",
-    name: "BMW X5 xDrive40",
-    pricePerDay: 289,
-    image:
-      "https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?auto=format&fit=crop&w=800&q=80",
-    specs: ["SUV", "Automatic", "Hybrid", "5 seats"],
-    rating: 4.9,
-    reviewsCount: 189,
-  },
-  {
-    id: "tesla-model-3",
-    name: "Tesla Model 3 Long Range",
-    pricePerDay: 249,
-    image:
-      "https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?auto=format&fit=crop&w=800&q=80",
-    specs: ["Sedan", "Automatic", "Electric", "5 seats"],
-    rating: 4.8,
-    reviewsCount: 412,
-  },
-  {
-    id: "audi-a4",
-    name: "Audi A4 S line",
-    pricePerDay: 199,
-    image:
-      "https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?auto=format&fit=crop&w=800&q=80",
-    specs: ["Sedan", "Automatic", "Petrol", "5 seats"],
-    rating: 4.6,
-    reviewsCount: 260,
-  },
-  {
-    id: "kia-sportage",
-    name: "Kia Sportage Hybrid",
-    pricePerDay: 179,
-    image:
-      "https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?auto=format&fit=crop&w=800&q=80",
-    specs: ["SUV", "Automatic", "Hybrid", "5 seats"],
-    rating: 4.5,
-    reviewsCount: 144,
-  },
-  {
-    id: "mini-cooper",
-    name: "Mini Cooper SE",
-    pricePerDay: 165,
-    image:
-      "https://images.unsplash.com/photo-1503736334956-4c8f8e92946d?auto=format&fit=crop&w=800&q=80",
-    specs: ["Hatchback", "Automatic", "Electric", "4 seats"],
-    rating: 4.8,
-    reviewsCount: 98,
-  },
+const cars: CarData[] = [
+  { name: "Mercedes", type: "Sedan", price: 25, transmission: "Automatic", fuel: "Petrol", ac: true, image: null },
+  { name: "Mercedes", type: "Sport", price: 50, transmission: "Automatic", fuel: "Petrol", ac: true, image: null },
+  { name: "Mercedes", type: "SUV", price: 45, transmission: "Automatic", fuel: "Diesel", ac: true, image: null },
+  { name: "Porsche", type: "SUV", price: 10, transmission: "Automatic", fuel: "Electric", ac: true, image: null },
+  { name: "Toyota", type: "SUV", price: 35, transmission: "Automatic", fuel: "Hybrid", ac: true, image: null },
+  { name: "Porsche", type: "SUV", price: 50, transmission: "Automatic", fuel: "Petrol", ac: true, image: null },
 ];
 
-export function CarGrid() {
+function CarSilhouette() {
   return (
-    <section className="mx-auto max-w-[1440px] px-6 py-14">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div className="space-y-1">
-          <p className="text-sm font-semibold uppercase tracking-wide text-primary-600">
-            Popular picks
-          </p>
-          <h2 className="text-3xl font-bold text-text-primary">
-            Featured vehicles
-          </h2>
-          <p className="text-text-secondary">
-            Curated cars available for instant booking.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2 text-sm text-text-secondary">
-          <FilterChip label="All" active />
-          <FilterChip label="SUV" />
-          <FilterChip label="Electric" />
-          <FilterChip label="Automatic" />
-        </div>
-      </div>
-      <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-        {cars.map((car) => (
-          <CarCard
-            key={car.id}
-            image={car.image}
-            title={car.name}
-            pricePerDay={car.pricePerDay}
-            rating={car.rating}
-            reviewsCount={car.reviewsCount}
-            specs={car.specs}
-          />
-        ))}
-      </div>
-    </section>
+    <svg viewBox="0 0 400 200" className="w-4/5 h-auto opacity-30">
+      <path
+        d="M50 140 Q60 100 120 90 L160 70 Q200 55 260 70 L310 90 Q360 100 370 140 Z"
+        fill="#9CA3AF"
+      />
+      <circle cx="120" cy="150" r="22" fill="#6B7280" />
+      <circle cx="120" cy="150" r="12" fill="#D1D5DB" />
+      <circle cx="310" cy="150" r="22" fill="#6B7280" />
+      <circle cx="310" cy="150" r="12" fill="#D1D5DB" />
+      <rect x="40" y="140" width="340" height="6" rx="3" fill="#9CA3AF" />
+    </svg>
   );
 }
 
-function FilterChip({ label, active = false }: { label: string; active?: boolean }) {
+function CarCard({ car }: { car: CarData }) {
   return (
-    <button
-      className={`rounded-full border px-3 py-1.5 transition-colors ${
-        active
-          ? "border-primary-200 bg-primary-50 text-primary-700"
-          : "border-border text-text-secondary hover:border-primary-200 hover:text-text-primary"
-      }`}
-    >
-      {label}
-    </button>
+    <div className="bg-white rounded-2xl shadow-md hover:shadow-xl hover:-translate-y-2 transition-all duration-300 overflow-hidden group">
+      {/* Image */}
+      <div className="h-48 bg-gradient-to-b from-gray-100 to-gray-200 flex items-center justify-center p-6">
+        {car.image ? (
+          <img src={car.image} alt={car.name} className="w-full h-full object-contain" loading="lazy" />
+        ) : (
+          <CarSilhouette />
+        )}
+      </div>
+
+      <div className="p-5">
+        {/* Header: name + price */}
+        <div className="flex items-start justify-between mb-1">
+          <div>
+            <h3 className="text-xl font-bold text-gray-900">{car.name}</h3>
+            <p className="text-sm text-gray-400">{car.type}</p>
+          </div>
+          <div className="text-right">
+            <span className="text-2xl font-extrabold text-brand-500">${car.price}</span>
+            <p className="text-xs text-gray-400">per day</p>
+          </div>
+        </div>
+
+        {/* Specs */}
+        <div className="flex items-center justify-between border-t border-b border-gray-100 py-3 my-4">
+          <div className="flex items-center gap-2 text-gray-400 text-xs">
+            <FontAwesomeIcon icon={faGear} className="text-sm" />
+            <span>{car.transmission}</span>
+          </div>
+          <div className="flex items-center gap-2 text-gray-400 text-xs">
+            <FontAwesomeIcon icon={faGasPump} className="text-sm" />
+            <span>{car.fuel}</span>
+          </div>
+          <div className="flex items-center gap-2 text-gray-400 text-xs">
+            <FontAwesomeIcon icon={faSnowflake} className="text-sm" />
+            <span>Air Conditioner</span>
+          </div>
+        </div>
+
+        {/* Button */}
+        <button className="w-full bg-gradient-to-r from-brand-500 to-brand-400 text-white font-bold rounded-xl py-3 text-sm hover:shadow-lg hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2">
+          View Details
+          <FontAwesomeIcon icon={faArrowRight} className="text-xs" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function CarGrid() {
+  return (
+    <section id="vehicles" className="py-16 md:py-20 bg-white">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-end justify-between mb-10">
+          <h2 className="text-2xl sm:text-3xl font-bold text-gray-900">
+            Choose the car that<br />suits you
+          </h2>
+          <a href="#" className="hidden sm:flex items-center gap-1 text-sm font-semibold text-brand-500 hover:underline">
+            View All <FontAwesomeIcon icon={faArrowRight} className="text-xs" />
+          </a>
+        </div>
+
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {cars.map((c, i) => (
+            <CarCard key={i} car={c} />
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }

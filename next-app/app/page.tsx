@@ -1,22 +1,24 @@
 import { Header } from "@/components/header";
 import { Hero } from "@/components/hero";
-import { SearchBar } from "@/components/search-bar";
-import { CarGrid } from "@/components/car-grid";
 import { Features } from "@/components/features";
-import { Testimonials } from "@/components/testimonials";
+import { About } from "@/components/about";
+import { CarGrid } from "@/components/car-grid";
+import { Stats } from "@/components/stats";
+import { MobileApp } from "@/components/mobile-app";
 import { CTA } from "@/components/cta";
 import Footer from "@/components/footer";
 
 export default function Home() {
   return (
-    <div className="min-h-screen bg-background text-text-primary">
+    <div className="min-h-screen bg-white text-gray-900">
       <Header />
       <main>
         <Hero />
-        <SearchBar />
-        <CarGrid />
         <Features />
-        <Testimonials />
+        <About />
+        <CarGrid />
+        <Stats />
+        <MobileApp />
         <CTA />
       </main>
       <Footer />

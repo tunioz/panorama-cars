@@ -1,86 +1,105 @@
-const footerLinks = [
-  { title: "Company", items: ["About", "Blog", "Careers", "Press"] },
-  {
-    title: "Support",
-    items: ["Help Center", "Cancellations", "Contact", "Accessibility"],
-  },
-  { title: "Legal", items: ["Terms", "Privacy", "Cookies", "Licenses"] },
-];
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faCar, faLocationDot, faEnvelope, faPhone } from "@fortawesome/free-solid-svg-icons";
+import { faFacebookF, faTwitter, faInstagram, faLinkedinIn } from "@fortawesome/free-brands-svg-icons";
+import { faApple, faGooglePlay } from "@fortawesome/free-brands-svg-icons";
 
-const socials = [
-  { label: "Twitter", href: "#", icon: "M5 3l14 9-14 9V3z" },
-  { label: "Facebook", href: "#", icon: "M7 3h10v18H7z" },
-  {
-    label: "LinkedIn",
-    href: "#",
-    icon: "M4 4h4v4H4zM4 10h4v10H4zM10 10h4v2h.1c.6-1.1 2-2.2 4.1-2.2 4.4 0 5.2 2.9 5.2 6.6V20h-4v-3.9c0-.9 0-2-1.2-2-1.2 0-1.4.9-1.4 1.9V20h-4V10z",
-  },
-];
+const usefulLinks = ["About us", "Contact us", "Gallery", "Blog", "FAQ"];
+const vehicles = ["Sedan", "Cabriolet", "Hatch", "Minivan", "SUV"];
 
 export default function Footer() {
   return (
-    <footer className="border-t border-border bg-surface">
-      <div className="mx-auto grid max-w-[1440px] grid-cols-1 gap-10 px-6 py-12 md:grid-cols-4">
-        <div className="space-y-4">
+    <footer id="footer" className="bg-gray-900 text-gray-300 pt-16 pb-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Top contact row */}
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-8 pb-10 border-b border-gray-800 mb-10">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 text-lg font-semibold text-primary-600">
-              CR
+            <div className="w-10 h-10 rounded-full bg-brand-500/20 flex items-center justify-center">
+              <FontAwesomeIcon icon={faCar} className="text-brand-400 text-sm" />
+            </div>
+            <span className="font-semibold text-white text-sm">Car Rental</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-brand-500/20 flex items-center justify-center">
+              <FontAwesomeIcon icon={faLocationDot} className="text-brand-400 text-sm" />
             </div>
             <div>
-              <p className="text-base font-semibold text-text-primary">CarRent</p>
-              <p className="text-sm text-text-secondary">Premium rentals made simple.</p>
+              <div className="text-xs text-gray-500">Address</div>
+              <div className="text-sm text-white">Oxford Ave, Cary, NC 27519</div>
             </div>
           </div>
-          <div className="space-y-1 text-sm text-text-secondary">
-            <p>+359 888 123 456</p>
-            <p>support@carrent.com</p>
-            <p>Sofia, Bulgaria</p>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-brand-500/20 flex items-center justify-center">
+              <FontAwesomeIcon icon={faEnvelope} className="text-brand-400 text-sm" />
+            </div>
+            <div>
+              <div className="text-xs text-gray-500">Email</div>
+              <div className="text-sm text-white">inquiry@yahoo.com</div>
+            </div>
           </div>
-          <div className="flex gap-3">
-            {socials.map((s) => (
-              <a
-                key={s.label}
-                href={s.href}
-                aria-label={s.label}
-                className="flex h-10 w-10 items-center justify-center rounded-md border border-border text-text-secondary transition-colors hover:border-primary-200 hover:text-primary-600"
-              >
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d={s.icon} />
-                </svg>
-              </a>
-            ))}
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-brand-500/20 flex items-center justify-center">
+              <FontAwesomeIcon icon={faPhone} className="text-brand-400 text-sm" />
+            </div>
+            <div>
+              <div className="text-xs text-gray-500">Phone</div>
+              <div className="text-sm text-white">+237 541-6101</div>
+            </div>
           </div>
         </div>
 
-        {footerLinks.map((group) => (
-          <div key={group.title} className="space-y-3">
-            <p className="text-sm font-semibold uppercase tracking-wide text-text-primary">
-              {group.title}
+        {/* Links */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-8 mb-12">
+          {/* About */}
+          <div>
+            <p className="text-sm text-gray-400 leading-relaxed">
+              Faucibus faucibus pellentesque dictum turpis. Id pellentesque turpis massa id lavalis lorem Lorem.
             </p>
-            <div className="flex flex-col gap-2 text-sm text-text-secondary">
-              {group.items.map((item) => (
-                <a key={item} href="#" className="transition-colors hover:text-text-primary">
-                  {item}
+            <div className="flex items-center gap-3 mt-4">
+              {[faFacebookF, faTwitter, faInstagram, faLinkedinIn].map((ic, i) => (
+                <a key={i} href="#" className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center hover:bg-brand-500 transition-colors">
+                  <FontAwesomeIcon icon={ic} className="text-xs text-gray-400 hover:text-white" />
                 </a>
               ))}
             </div>
           </div>
-        ))}
-      </div>
-      <div className="border-t border-border bg-surface-muted">
-        <div className="mx-auto flex max-w-[1440px] flex-col gap-3 px-6 py-4 text-sm text-text-secondary md:flex-row md:items-center md:justify-between">
-          <p>© 2026 CarRent. All rights reserved.</p>
-          <div className="flex gap-4">
-            <a href="#" className="hover:text-text-primary">
-              Privacy Policy
-            </a>
-            <a href="#" className="hover:text-text-primary">
-              Terms of Service
-            </a>
-            <a href="#" className="hover:text-text-primary">
-              Cookies
-            </a>
+
+          {/* Useful links */}
+          <div>
+            <h4 className="font-bold text-white text-sm mb-4">Useful Links</h4>
+            <ul className="space-y-2">
+              {usefulLinks.map((l) => (
+                <li key={l}><a href="#" className="text-sm text-gray-400 hover:text-white transition-colors">{l}</a></li>
+              ))}
+            </ul>
           </div>
+
+          {/* Vehicles */}
+          <div>
+            <h4 className="font-bold text-white text-sm mb-4">Vehicles</h4>
+            <ul className="space-y-2">
+              {vehicles.map((v) => (
+                <li key={v}><a href="#" className="text-sm text-gray-400 hover:text-white transition-colors">{v}</a></li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Download */}
+          <div>
+            <h4 className="font-bold text-white text-sm mb-4">Download App</h4>
+            <div className="space-y-3">
+              <a href="#" className="flex items-center gap-2 bg-gray-800 rounded-lg px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-700 transition-colors">
+                <FontAwesomeIcon icon={faApple} className="text-lg" /> App Store
+              </a>
+              <a href="#" className="flex items-center gap-2 bg-gray-800 rounded-lg px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-700 transition-colors">
+                <FontAwesomeIcon icon={faGooglePlay} className="text-lg" /> Google Play
+              </a>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom */}
+        <div className="border-t border-gray-800 pt-6 text-center text-xs text-gray-500">
+          © Duy Anh Car Rental 2024. Designed by Ape Agile.
         </div>
       </div>
     </footer>

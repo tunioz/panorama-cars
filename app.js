@@ -349,7 +349,13 @@
     address: 'ул. Пример 1, София',
     iban: 'BG00UNCR00000000000000'
   }));
-  // Допълнителни филтри по параметри (id -> value), попълват се от „Още филтри“
+  // Global company info for header/footer
+  let companyInfo = null;
+  async function loadCompanyInfo() {
+    try { companyInfo = await apiFetch('/api/company'); } catch { companyInfo = null; }
+  }
+  await loadCompanyInfo();
+  // Допълнителни филтри по параметри (id -> value), попълват се от „Още филтри"
   let extraFilters = {};
   // Load parameter definitions from API for dynamic filters
   let paramDefs = [];
@@ -391,29 +397,205 @@
   }
 
   // Router
-  function mountSearchLayout() {
-    app.innerHTML = `
-      <nav class="topnav">
-        <div class="logo">CR</div>
-        <a class="navbtn active" href="#/" title="Коли под наем">Коли под наем</a>
-        <div class="spacer"></div>
-        <a class="navbtn" href="#/admin" title="Админ">Админ</a>
-      </nav>
-      <section class="panel filters" id="filters"></section>
-      <section class="panel results" id="results"></section>
-      <section class="panel details" id="details"></section>
+  /* ===== Reusable layout components ===== */
+  const logoSVG = `<svg class="logo-car-svg" viewBox="0 0 40 40" width="40" height="40"><rect width="40" height="40" rx="10" fill="#111827"/><g transform="translate(6,10)" fill="none" stroke="#fff" stroke-width="1.8"><path d="M2 14h24M4 14c0-2 1-4 3-5l3-4h8l3 4c2 1 3 3 3 5"/><circle cx="8" cy="16" r="2.5"/><circle cx="20" cy="16" r="2.5"/></g></svg>`;
+  const phoneSVGInline = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 5.15 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.81.36 1.6.68 2.36a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.76.32 1.55.55 2.36.68A2 2 0 0 1 22 16.92z"/></svg>`;
+
+  function siteHeaderHTML(activePage) {
+    const navLinks = [
+      { href:'#/', label:'Начало', id:'home' },
+      { href:'#/vehicles', label:'АвтоПарк', id:'vehicles' },
+      { href:'#/about-us', label:'За нас', id:'about-us' },
+      { href:'#footer', label:'Контакти', id:'contact' },
+      { href:'#/admin', label:'Админ', id:'admin' },
+    ];
+    const desktopLinks = navLinks.map(l => {
+      const cls = l.id === activePage ? ' class="hdr-link-active"' : '';
+      return `<a href="${l.href}"${cls}>${l.label}</a>`;
+    }).join('');
+    const mobileLinks = navLinks.map(l => {
+      const cls = l.id === activePage ? ' class="hdr-link-active"' : '';
+      return `<a href="${l.href}"${cls}>${l.label}</a>`;
+    }).join('');
+    const hdrPhone = companyInfo?.phone || '+359 888 810 469';
+    const hdrPhoneClean = hdrPhone.replace(/[\s-]/g, '');
+    return `
+      <header class="site-header">
+        <a href="#/" class="logo-brand">${logoSVG} Meniar.com</a>
+        <nav id="desktopNav">${desktopLinks}</nav>
+        <div class="hdr-spacer"></div>
+        <a href="tel:${hdrPhoneClean}" class="hdr-phone">${phoneSVGInline} ${hdrPhone}</a>
+        <button class="hamburger" id="hamburgerBtn"></button>
+      </header>
+      <div id="mobileNav" class="mobile-nav" style="display:none;">${mobileLinks}</div>
     `;
   }
-  function mountAdminLayout() {
-    app.innerHTML = `
-      <nav class="topnav">
-        <div class="logo">CR</div>
-        <a class="navbtn" href="#/" title="Коли под наем">Коли под наем</a>
-        <div class="spacer"></div>
-        <a class="navbtn active" href="#/admin" title="Админ">Админ</a>
-      </nav>
-      <section id="adminRoot" class="admin-shell" style="grid-column: 1 / -1;"></section>
+
+  function siteFooterHTML() {
+    const ftPhone = companyInfo?.phone || '+359 888 810 469';
+    const ftEmail = companyInfo?.email || 'info@meniar.com';
+    const ftAddr = (() => {
+      const parts = [];
+      if (companyInfo?.city) parts.push('гр. ' + companyInfo.city);
+      if (companyInfo?.address) parts.push(companyInfo.address);
+      return parts.length ? parts.join(', ') : 'гр. София';
+    })();
+    // Unique car types from loaded cars
+    const carTypes = [...new Set(cars.map(c => c.type).filter(Boolean))];
+    const carTypesHTML = carTypes.length
+      ? carTypes.map(t => `<li><a href="#/vehicles">${t}</a></li>`).join('')
+      : '<li><a href="#/vehicles">Всички коли</a></li>';
+    return `
+      <footer class="site-footer" id="footer">
+        <div class="foot-inner">
+          <div class="foot-contact">
+            <div class="foot-contact-item"><div class="foot-contact-icon">${svgCarIcon}</div><div><div class="fc-value" style="font-weight:600;">Meniar.com</div></div></div>
+            <div class="foot-contact-item"><div class="foot-contact-icon">${svgPin}</div><div><div class="fc-label">Адрес</div><div class="fc-value">${ftAddr}</div></div></div>
+            <div class="foot-contact-item"><div class="foot-contact-icon">${svgMail}</div><div><div class="fc-label">Имейл</div><div class="fc-value">${ftEmail}</div></div></div>
+            <div class="foot-contact-item"><div class="foot-contact-icon">${svgPhone}</div><div><div class="fc-label">Телефон</div><div class="fc-value">${ftPhone}</div></div></div>
+          </div>
+          <div class="foot-links">
+            <div><p style="font-size:13px;color:#9CA3AF;line-height:1.6;">Вашият надежден партньор за наем на автомобили. Качество и комфорт на достъпна цена.</p><div class="foot-socials"><a href="#">f</a><a href="#">t</a><a href="#">in</a><a href="#">ig</a></div></div>
+            <div><h4>Бързи връзки</h4><ul><li><a href="#/about-us">За нас</a></li><li><a href="#/vehicles">АвтоПарк</a></li><li><a href="#/about-us" onclick="setTimeout(()=>{const f=document.getElementById('faq');if(f)f.scrollIntoView({behavior:'smooth'})},100)">Въпроси & Отговори</a></li><li><a href="#/policies">Условия и Политики</a></li></ul></div>
+            <div><h4>АвтоПарк</h4><ul>${carTypesHTML}</ul></div>
+          </div>
+          <div class="foot-bottom">© Meniar ${new Date().getFullYear()}. Всички права запазени.</div>
+        </div>
+      </footer>
     `;
+  }
+
+  function bindHamburger() {
+    const hBtn = $('#hamburgerBtn');
+    const mNav = $('#mobileNav');
+    if (!hBtn || !mNav) return;
+    hBtn.innerHTML = svgMenu;
+    hBtn.onclick = () => {
+      const open = mNav.style.display !== 'none';
+      mNav.style.display = open ? 'none' : 'block';
+      hBtn.innerHTML = open ? svgMenu : svgX;
+    };
+    $$('a', mNav).forEach(a => a.addEventListener('click', () => { mNav.style.display = 'none'; hBtn.innerHTML = svgMenu; }));
+  }
+
+  /* SVG icon helpers for landing sections */
+  const svgCalCheck = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><path d="M9 14l2 2 4-4"/></svg>`;
+  const svgCouch = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12V8a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v4"/><path d="M2 14a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z"/><path d="M6 18v2"/><path d="M18 18v2"/></svg>`;
+  const svgPiggy = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 10c0 3.87-3.13 7-7 7s-7-3.13-7-7 3.13-7 7-7 7 3.13 7 7z"/><path d="M15.5 8.5l.5-.5"/><path d="M9 14h6"/><circle cx="9" cy="10" r=".5" fill="currentColor"/></svg>`;
+  const svgCheck = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12l5 5L20 7"/></svg>`;
+  const svgCarIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 17h14M5 17a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2l2-3h6l2 3h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2M5 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM19 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>`;
+  const svgUsers = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`;
+  const svgCalendar = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
+  const svgRoad = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19L8 5h8l4 14"/><line x1="12" y1="5" x2="12" y2="19" stroke-dasharray="2 2"/></svg>`;
+  const svgPhone = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 5.15 13a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.81.36 1.6.68 2.36a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.76.32 1.55.55 2.36.68A2 2 0 0 1 22 16.92z"/></svg>`;
+  const svgMail = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 7L2 7"/></svg>`;
+  const svgPin = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`;
+  const svgMenu = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>`;
+  const svgX = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+  const svgCarSide = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#9CA3AF" stroke-width="2"><path d="M5 17h14M5 17a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2l2-3h6l2 3h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2"/><circle cx="7.5" cy="17" r="2"/><circle cx="16.5" cy="17" r="2"/></svg>`;
+  const svgLocationDot = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#9CA3AF" stroke-width="2"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`;
+  const svgCalIcon = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#9CA3AF" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
+  const svgGearSmall = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#9CA3AF" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
+
+  function mountSearchLayout() {
+    app.className = 'landing-wrap';
+    app.innerHTML = `
+      ${siteHeaderHTML('home')}
+
+      <!-- HERO -->
+      <section class="hero-section">
+        <div class="hero-inner">
+          <div class="hero-text">
+            <h1>Преживей пътя като никога преди!</h1>
+            <p>Открийте перфектния автомобил под наем. <br/>Бързо, лесно и на достъпни цени.</p>
+            <a href="#vehicles" class="hero-cta">Виж всички коли ↓</a>
+          </div>
+          <div class="hero-booking" id="heroBooking">
+            <h2>Намери кола под наем</h2>
+            <!-- Booking form will be rendered by renderFilters -->
+            <div id="filters"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FEATURES -->
+      <section class="features-section">
+        <div class="feat-inner">
+          <div class="feat-item">
+            <div class="feat-icon">${svgCalCheck}</div>
+            <h3>Наличност</h3>
+            <p>Широк избор от коли, налични 24/7 за вашите нужди.</p>
+          </div>
+          <div class="feat-item">
+            <div class="feat-icon">${svgCouch}</div>
+            <h3>Комфорт</h3>
+            <p>Премиум автомобили с пълно оборудване за максимален комфорт.</p>
+          </div>
+          <div class="feat-item">
+            <div class="feat-icon">${svgPiggy}</div>
+            <h3>Спестявания</h3>
+            <p>Конкурентни цени и специални оферти за дългосрочен наем.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ABOUT -->
+      <section class="about-section" id="about">
+        <div class="about-inner">
+          <div class="about-img"><img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='300'><rect width='400' height='300' fill='%23E5E7EB'/><text x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239CA3AF' font-size='18'>Car Rental</text></svg>" alt=""></div>
+          <div class="about-points">
+            <div class="about-point"><div class="about-bullet">${svgCheck}</div><div><h4>Бърза резервация</h4><p>Резервирайте кола за минути с нашата лесна онлайн система.</p></div></div>
+            <div class="about-point"><div class="about-bullet">${svgCheck}</div><div><h4>Гъвкави условия</h4><p>Без скрити такси. Безплатна отмяна до 24 часа преди взимане.</p></div></div>
+            <div class="about-point"><div class="about-bullet">${svgCheck}</div><div><h4>Включена Застраховка</h4><p>Всички автомобили са с пълна застраховка и пътна помощ.</p></div></div>
+            <div class="about-point"><div class="about-bullet">${svgCheck}</div><div><h4>24/7 поддръжка</h4><p>Нашият екип е на ваше разположение денонощно.</p></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VEHICLES (car grid) -->
+      <div id="vehicles">
+        <div class="vehicles-heading">
+          <h2>Налични коли в автопарка</h2>
+        </div>
+        <section class="panel results" id="results" style="border:none; box-shadow:none; max-width:1200px; margin:0 auto;"></section>
+      </div>
+
+      <!-- STATS -->
+      <section class="stats-section" id="stats">
+        <div class="stats-inner">
+          <h2>Факти и Цифри</h2>
+          <p class="stats-sub">Нашият опит в цифри – надеждност, която говори сама за себе си.</p>
+          <div class="stats-grid">
+            <div class="stat-card"><div class="stat-icon">${svgCarIcon}</div><div><div class="stat-value">10+</div><div class="stat-label">Коли</div></div></div>
+            <div class="stat-card"><div class="stat-icon">${svgUsers}</div><div><div class="stat-value">100+</div><div class="stat-label">Клиенти</div></div></div>
+            <div class="stat-card"><div class="stat-icon">${svgCalendar}</div><div><div class="stat-value">15+</div><div class="stat-label">Години</div></div></div>
+            <div class="stat-card"><div class="stat-icon">${svgRoad}</div><div><div class="stat-value">1,000,000+</div><div class="stat-label">Километра</div></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- CTA -->
+      <section class="cta-section">
+        <h2>Наслаждавайте се на всеки километър <br>с приятна компания</h2>
+        <p>Абонирайте се за нашия бюлетин и получавайте специални оферти.</p>
+        <div class="cta-form">
+          <input type="email" placeholder="Вашият имейл">
+          <button>Абонирай се сега</button>
+        </div>
+      </section>
+
+      ${siteFooterHTML()}
+      <section class="panel details" id="details" style="display:none;"></section>
+    `;
+    bindHamburger();
+  }
+  function mountAdminLayout() {
+    app.className = 'landing-wrap';
+    app.innerHTML = `
+      ${siteHeaderHTML('admin')}
+      <section id="adminRoot" class="admin-shell" style="max-width:1200px; margin:0 auto; padding:16px;"></section>
+    `;
+    bindHamburger();
   }
   function navigate(hash) { if (location.hash !== hash) location.hash = hash; else renderRoute(); }
   window.addEventListener('hashchange', renderRoute);
@@ -463,43 +645,41 @@
     let locations = [];
     try { locations = await apiFetch('/api/locations'); } catch { locations = []; }
     root.innerHTML = `
-      <div class="filters-bar">
-        <div class="fgrp g-pick ta-wrap">
+      <div style="display:grid; gap:14px;">
+        <div class="hb-group ta-wrap">
           <label>Място на взимане</label>
-          <input id="pickPlace" class="input" placeholder="Започнете да пишете...">
+          <div class="hb-input-wrap">
+            <input id="pickPlace" class="hb-input" placeholder="Enter location">
+            <span class="hb-icon">${svgLocationDot}</span>
+          </div>
         </div>
-        <div class="fgrp g-drop ta-wrap">
+        <div class="hb-group ta-wrap">
           <label>Място на връщане</label>
-          <input id="dropPlace" class="input" placeholder="Започнете да пишете...">
+          <div class="hb-input-wrap">
+            <input id="dropPlace" class="hb-input" placeholder="Enter location">
+            <span class="hb-icon">${svgLocationDot}</span>
+          </div>
         </div>
-            <div class="fgrp g-from">
-              <label>Дата взимане</label>
-              <input id="fromDate" type="datetime-local" class="input" step="1800">
-            </div>
-            <div class="fgrp g-to">
-              <label>Дата на връщане</label>
-              <input id="toDate" type="datetime-local" class="input" step="1800">
-            </div>
-        <div class="fgrp g-type">
-          <label>Вид кола</label>
-          <select id="typeSelect" class="select">
-            ${typeOptions.map(o => `<option>${o}</option>`).join('')}
-          </select>
+        <div class="hb-group">
+          <label>Дата на взимане</label>
+          <div class="hb-input-wrap">
+            <input id="fromDate" type="datetime-local" class="hb-input hb-input-noicon" step="1800">
+          </div>
         </div>
-        <div class="fgrp g-gear">
-          <label>Скоростна кутия</label>
-          <select id="transmissionSelect" class="select">
-            ${gearOptions.map(o => {
-              const val = o === 'Без значение' ? 'Any' : o;
-              const sel = o === 'Без значение' ? ' selected' : '';
-              return `<option value="${val}"${sel}>${o}</option>`;
-            }).join('')}
-          </select>
+        <div class="hb-group">
+          <label>Дата на връщане</label>
+          <div class="hb-input-wrap">
+            <input id="toDate" type="datetime-local" class="hb-input hb-input-noicon" step="1800">
+          </div>
         </div>
-        <div class="fgrp g-submit">
-          <label>&nbsp;</label>
-          <button id="submitFilters" class="btn-primary" style="height:40px;padding:0 18px;">Търси</button>
-        </div>
+        <select id="transmissionSelect" style="display:none;">
+          ${gearOptions.map(o => {
+            const val = o === 'Без значение' ? 'Any' : o;
+            const sel = o === 'Без значение' ? ' selected' : '';
+            return `<option value="${val}"${sel}>${o}</option>`;
+          }).join('')}
+        </select>
+        <button id="submitFilters" class="hb-submit">Резервирай сега</button>
       </div>
     `;
     // Attach typeahead to both inputs
@@ -510,7 +690,7 @@
     $('#fromDate').value = filterState.from || '';
     $('#toDate').value = filterState.to || '';
 
-    $('#submitFilters').onclick = () => { applyFilters(); };
+    $('#submitFilters').onclick = () => { navigate('#/vehicles'); };
     $('#transmissionSelect').onchange = (e) => { filterState.transmission = e.target.value; applyFilters(); };
     const syncPick = (e) => { filterState.pick = e.target.value; };
     const syncDrop = (e) => { filterState.drop = e.target.value; };
@@ -526,7 +706,6 @@
     };
     bindDateSnap($('#fromDate'), 'from');
     bindDateSnap($('#toDate'), 'to');
-    $('#typeSelect').onchange = (e) => { filterState.type = e.target.value; applyFilters(); };
   }
 
   let filterTimer = null;
@@ -581,10 +760,18 @@
     if (mode === 'Price: High to Low') filtered.sort((a,b) => (b.pricePerDay||0) - (a.pricePerDay||0));
     if (mode === 'Newest') filtered.sort((a,b) => b.year - a.year);
   }
+  // Shared car spec SVG icons — used by both homepage and vehicles page
+  const gearIcon = () => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
+  const fuelIcon = () => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h1a2 2 0 0 1 2 2v11.5a2.5 2.5 0 1 1-5 0V4a1 1 0 0 1 1-1Z"></path><path d="M6 3h8v18H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"></path><path d="M6 14h8"></path><path d="M18 7h1.5a1.5 1.5 0 0 1 0 3H18"></path><path d="M8 7h2"></path></svg>`;
+  const acIcon = () => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 0 20"></path><path d="m4.93 4.93 14.14 14.14"></path><path d="m4.93 19.07 14.14-14.14"></path><path d="m3 12 18 0"></path></svg>`;
+  const seatIcon = () => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h7a2 2 0 0 1 2 2v9h-5a4 4 0 0 1-4-4V3Z"></path><path d="M9 18h9a2 2 0 0 0 2-2v-2"></path><path d="M3 12v2a4 4 0 0 0 4 4"></path></svg>`;
+  const powerIcon = () => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v7l-2 2"></path><path d="m12 9 2 2"></path><circle cx="12" cy="13" r="8"></circle></svg>`;
+  const doorsIcon = () => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18H6z"></path><path d="M14 12h2"></path></svg>`;
+  const luggageIcon = () => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="7" width="14" height="13" rx="2"></rect><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path><path d="M9 11v4"></path><path d="M15 11v4"></path></svg>`;
+
   function renderResults() {
     const r = $('#results');
     const count = filtered.length;
-    r.style.gridColumn = '1 / -1';
     const plainParams = (paramDefs || []).filter(d => !['Вид кола','Скоростна кутия'].includes(d.name));
     r.innerHTML = `
       <div class="results-header" style="justify-content:flex-start;gap:12px;">
@@ -629,14 +816,23 @@
 
     const grid = $('#resultsGrid');
     grid.innerHTML = '';
+    const silhouetteSVG = () => {
+      const svg = `<svg width="320" height="120" viewBox="0 0 320 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="320" height="120" rx="16" fill="url(#grad)"/>
+        <defs><linearGradient id="grad" x1="0" y1="0" x2="0" y2="120"><stop stop-color="#F8F9FA"/><stop offset="1" stop-color="#E9ECEF"/></linearGradient></defs>
+        <path d="M40 72c5-16 24-30 54-30h62c18 0 36 8 46 20l13 16H40v-6Z" fill="#D1D5DB"/>
+        <circle cx="90" cy="78" r="12" fill="#CED4DA"/><circle cx="90" cy="78" r="6" fill="#ADB5BD"/>
+        <circle cx="206" cy="78" r="12" fill="#CED4DA"/><circle cx="206" cy="78" r="6" fill="#ADB5BD"/>
+      </svg>`;
+      return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+    };
     filtered.forEach((c, i) => {
       const card = document.createElement('article');
-      card.className = 'card';
-      const hue = 205 + (i * 20) % 120;
+      card.className = 'cc';
       const firstImg = (() => {
         const im = (c.images || [])[0];
         const p = im && (im.thumb || im.large);
-        return p ? `${API_BASE}${p}` : carPlaceholderSVG(`${c.brand} ${c.model}`, 680, 160, hue);
+        return p ? `${API_BASE}${p}` : null;
       })();
       const fromTs = filterState.from ? Date.parse(filterState.from) : null;
       const toTs = filterState.to ? Date.parse(filterState.to) : null;
@@ -644,100 +840,88 @@
       const priceDay = Number(c.pricePerDay || 0);
       const total = (priceDay * days) || 0;
       card.innerHTML = `
-        <div class="card-media" data-car-details="${c.id}" style="cursor:pointer;">
-          <img alt="" src="${firstImg}" style="width:100%;height:140px;object-fit:cover;border:0;border-top-left-radius:12px;border-top-right-radius:12px;">
+        <div class="cc-img" data-car-details="${c.id}">
+          ${firstImg
+            ? `<img alt="${c.brand} ${c.model}" src="${firstImg}" loading="lazy" class="cc-photo">`
+            : `<svg viewBox="0 0 400 200" class="cc-sil"><path d="M50 140 Q60 100 120 90 L160 70 Q200 55 260 70 L310 90 Q360 100 370 140 Z" fill="#9CA3AF"/><circle cx="120" cy="150" r="22" fill="#6B7280"/><circle cx="120" cy="150" r="12" fill="#D1D5DB"/><circle cx="310" cy="150" r="22" fill="#6B7280"/><circle cx="310" cy="150" r="12" fill="#D1D5DB"/><rect x="40" y="140" width="340" height="6" rx="3" fill="#9CA3AF"/></svg>`
+          }
         </div>
-        <div class="card-body">
-          <div class="row" style="align-items:flex-start;">
+        <div class="cc-body">
+          <div class="cc-head">
             <div>
-              <div class="title" data-car-details="${c.id}" style="cursor:pointer;">${c.brand} ${c.model}</div>
-              <div style="color:var(--color-text-3);font-size:13px;margin-top:2px;">${c.type || ''}</div>
+              <h3 class="cc-name" data-car-details="${c.id}">${c.brand} ${c.model}</h3>
+              <p class="cc-type">${c.type || ''}</p>
             </div>
-            <div class="row" style="gap:8px;align-items:center;">
-              ${(() => {
-                const selFrom = filterState.from;
-                const selTo = filterState.to;
-                const isService = () => {
-                  const s = (c.status || '').toString().toLowerCase();
-                  return s.includes('серв') || s === 'service';
-                };
-                const overlaps = (() => {
-                  const rel = (reservations || []).filter(r => r.carId === c.id && !(r.status && r.status.toUpperCase() === 'DECLINED'));
-                  if (!selFrom || !selTo) return rel;
-                  return rel.filter(r => isOverlap(selFrom, selTo, r.from, r.to));
-                })();
-                const hasOverlap = overlaps.some(r => isOverlap(selFrom, selTo, r.from, r.to));
-                let label = 'Наличен';
-                let style = 'background:#e6f4ea;border-color:#b7ebc6;color:#0f5132;';
-                if (isService()) {
-                  label = 'Не е наличен';
-                  style = 'background:#ffecec;border-color:#ffd0d0;color:#b42318;';
-                } else if (hasOverlap) {
-                  label = 'Резервиран';
-                  style = 'background:#fff4e5;border-color:#ffd79d;color:#b25e09;';
-                } else if (selFrom && selTo) {
-                  label = 'Наличен';
-                }
-                const tooltip = overlaps.length
-                  ? overlaps.map(r => fmtRange(r.from, r.to)).join('\n')
-                  : '';
-                return `<span class="pill" style="${style}" title="${tooltip}">${label}</span>`;
-              })()}
+            <div class="cc-price-block">
+              <span class="cc-price">€${priceDay.toFixed(0)}</span>
+              <span class="cc-per">на ден</span>
             </div>
           </div>
-          <div class="meta" id="specs-${c.id}" style="flex-wrap:wrap;gap:6px;"></div>
-          <div class="row" style="margin-top:14px;align-items:center;justify-content:space-between;">
-            <div style="font-size:18px;font-weight:700;">€${priceDay.toFixed(0)} <span style="color:var(--color-text-3);font-size:12px;font-weight:500;">/ ден</span></div>
-            <div class="row" style="gap:8px;">
-              ${(() => {
-                // Определяме дали е налична според логиката за статус в момента
-                const selFrom = filterState.from;
-                const selTo = filterState.to;
-                const isService = () => {
-                  const s = (c.status || '').toString().toLowerCase();
-                  return s.includes('серв') || s === 'service';
-                };
-                const hasOverlap = () => {
-                  if (!selFrom || !selTo) return false;
-                  const rel = (reservations || []).filter(r => r.carId === c.id && !['declined'].includes(r.status));
-                  return rel.some(r => isOverlap(selFrom, selTo, r.from, r.to));
-                };
-                const available = !isService() && !(selFrom && selTo && hasOverlap());
-                return available ? `<button class="btn-primary" data-check="${c.id}" style="height:36px;">Резервирай</button>` : '';
-              })()}
-            </div>
-          </div>
+          <div id="specs-${c.id}" class="cc-specs"></div>
+          <button class="cc-btn" data-details="${c.id}">
+            Резервирай
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
         </div>
       `;
-      card.onclick = (ev) => {
-        // В списъка не показваме страничния панел с подробности
-        if (ev.target.classList.contains('heart')) return;
-        return;
-      };
       grid.appendChild(card);
-      // Load and render specs (само параметрите от админ панела)
-      loadCarParams(c.id).then(list => {
+      const renderSpecs = (params=[]) => {
         const el = document.getElementById(`specs-${c.id}`);
         if (!el) return;
-        const items = (list || []).filter(p => p?.value !== null && p?.value !== '');
-        const chips = items.map(p => {
-          const icon = getParamIcon(p.name);
-          // Показваме стойността както е въведена в админ панела, без превод
-          return `<span class="pill" title="${p.name}">${icon} ${p.value}</span>`;
-        }).join('');
-        el.innerHTML = chips || `<span class="pill">Без параметри</span>`;
-      }).catch(()=>{});
-    });
-    $$('[data-check]').forEach(b => b.onclick = (e) => {
-      const id = e.currentTarget.getAttribute('data-check');
-      const q = new URLSearchParams({
-        car: id,
-        pick: filterState.pick || '',
-        drop: filterState.drop || '',
-        from: filterState.from || '',
-        to: filterState.to || ''
-      }).toString();
-      navigate(`#/reserve?${q}&step=1`);
+        const norm = (params || []).map(p => ({
+          name: p.name || '',
+          lower: (p.name || '').toLowerCase(),
+          value: p.value ?? p.valueText ?? p.valueEnum ?? p.valueNum ?? ''
+        }));
+        const valOf = (names, fallback, fuzzy=false) => {
+          const list = Array.isArray(names) ? names : [names];
+          let found = norm.find(p => list.includes(p.name));
+          if (!found && fuzzy) {
+            const needle = list.map(s => s.toLowerCase());
+            found = norm.find(p => needle.some(n => p.lower.includes(n)));
+          }
+          const val = found?.value;
+          if (val === undefined || val === null || val === '') return fallback;
+          return val;
+        };
+        const trans = valOf(['Скоростна кутия'], c.transmission || 'Automatic', true);
+        const fuel = valOf(['Гориво','Тип гориво'], c.fuel || 'Fuel', true);
+        const specs = [
+          { icon: gearIcon(), text: trans },
+          { icon: fuelIcon(), text: fuel },
+          { icon: acIcon(), text: 'Air Conditioner' }
+        ];
+        el.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${s.text}</span></div>`).join('');
+      };
+      const availability = (() => {
+        const selFrom = filterState.from;
+        const selTo = filterState.to;
+        const isService = () => {
+          const s = (c.status || '').toString().toLowerCase();
+          return s.includes('серв') || s === 'service';
+        };
+        const overlaps = (() => {
+          const rel = (reservations || []).filter(r => r.carId === c.id && !(r.status && r.status.toUpperCase() === 'DECLINED'));
+          if (!selFrom || !selTo) return rel;
+          return rel.filter(r => isOverlap(selFrom, selTo, r.from, r.to));
+        })();
+        const hasOverlap = overlaps.some(r => isOverlap(selFrom, selTo, r.from, r.to));
+        let label = 'Наличен';
+        let available = true;
+        if (isService()) { label = 'Не е наличен'; available = false; }
+        else if (selFrom && selTo && hasOverlap) { label = 'Резервиран'; available = false; }
+        return { available, label };
+      })();
+      loadCarParams(c.id).then(list => {
+        const norm = (list || []).map(p => ({ name: p.name, value: p.value || p.valueText || p.valueEnum || p.valueNum || '' }));
+        renderSpecs(norm);
+      }).catch(() => renderSpecs([]));
+
+      const btn = card.querySelector('.cc-btn');
+      if (btn && !availability.available) {
+        btn.disabled = true;
+        btn.classList.add('cc-btn-disabled');
+      }
     });
     $$('[data-car-details]').forEach(el => {
       el.onclick = () => {
@@ -745,7 +929,6 @@
         openCarDetails(id);
       };
     });
-    // Навигация към wizard при „Детайли“
     $$('[data-details]').forEach(b => b.onclick = (e) => {
       const id = e.currentTarget.getAttribute('data-details');
       const q = new URLSearchParams({
@@ -857,46 +1040,115 @@
       const renderContent = () => {
         const main = imgs[currentIdx];
         const mainSrc = main ? toSrc(main) : carPlaceholderSVG(`${car.brand} ${car.model}`, 960, 360, 205);
-        const chips = (params || []).filter(p => p?.value).map(p => {
-          const icon = getParamIcon(p.name);
-          return `<span class="pill" title="${p.name}">${icon} ${p.value}</span>`;
-        }).join('');
         const tooltip = relRes.map(r => {
           const f = new Date(r.from).toLocaleString('bg-BG', { dateStyle: 'short', timeStyle: 'short' });
           const t = new Date(r.to).toLocaleString('bg-BG', { dateStyle: 'short', timeStyle: 'short' });
           return `${f} → ${t}`;
         }).join('\\n');
-        card.innerHTML = `
-          <div class="modal-header" style="display:flex;align-items:center;gap:12px;">
-            <div style="flex:1;">
-              <div style="font-size:20px;font-weight:700;">${car.brand} ${car.model}${car.trim ? (' ' + car.trim) : ''}</div>
-              <div style="color:var(--color-text-3);font-size:13px;">${car.type || ''}</div>
+
+        /* Build spec cards for Technical Specification grid */
+        const specIconSVG = (name) => {
+          const n = (name || '').toLowerCase();
+          if (n.includes('скоростна') || n.includes('gear'))
+            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
+          if (n.includes('гориво') || n.includes('fuel'))
+            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M16 3h1a2 2 0 0 1 2 2v11.5a2.5 2.5 0 1 1-5 0V4a1 1 0 0 1 1-1Z"/><path d="M6 3h8v18H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M6 14h8"/><path d="M18 7h1.5a1.5 1.5 0 0 1 0 3H18"/><path d="M8 7h2"/></svg>`;
+          if (n.includes('врати') || n.includes('door'))
+            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M6 3h12v18H6z"/><path d="M14 12h2"/></svg>`;
+          if (n.includes('седалки') || n.includes('места') || n.includes('seat'))
+            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"/><path d="M5.5 21a8.38 8.38 0 0 1 13 0"/></svg>`;
+          if (n.includes('конски') || n.includes('мощност') || n.includes('horse') || n.includes('power'))
+            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M12 2v7l-2 2"/><path d="m12 9 2 2"/><circle cx="12" cy="13" r="8"/></svg>`;
+          if (n.includes('багаж') || n.includes('luggage'))
+            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><rect x="5" y="7" width="14" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M9 11v4"/><path d="M15 11v4"/></svg>`;
+          if (n.includes('вид кола') || n.includes('тип') || n.includes('type'))
+            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M5 17h14M5 17a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2l2-3h6l2 3h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2"/><circle cx="7.5" cy="17" r="2"/><circle cx="16.5" cy="17" r="2"/></svg>`;
+          if (n.includes('климат') || n.includes('air'))
+            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="m12 2 0 20"/><path d="m4.93 4.93 14.14 14.14"/><path d="m4.93 19.07 14.14-14.14"/><path d="m3 12 18 0"/></svg>`;
+          if (n.includes('разстояние') || n.includes('distance') || n.includes('пробег'))
+            return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><path d="M4 19L8 5h8l4 14"/><line x1="12" y1="5" x2="12" y2="19" stroke-dasharray="2 2"/></svg>`;
+          return `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#6366F1" stroke-width="1.6"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l2 2"/></svg>`;
+        };
+        const specLabel = (name) => {
+          const n = (name || '').toLowerCase();
+          if (n.includes('скоростна')) return 'Скоростна кутия';
+          if (n.includes('гориво')) return 'Гориво';
+          if (n.includes('врати')) return 'Врати';
+          if (n.includes('седалки') || n.includes('места')) return 'Места';
+          if (n.includes('конски') || n.includes('мощност')) return 'Мощност';
+          if (n.includes('багаж')) return 'Багаж';
+          if (n.includes('вид кола') || n.includes('тип')) return 'Тип';
+          if (n.includes('климат') || n.includes('air')) return 'Климатик';
+          if (n.includes('разстояние') || n.includes('distance') || n.includes('пробег')) return 'Пробег';
+          return name;
+        };
+        const specCards = (params || []).filter(p => p?.value).map(p =>
+          `<div class="cdm-spec-card">
+            <div class="cdm-spec-icon">${specIconSVG(p.name)}</div>
+            <div class="cdm-spec-label">${specLabel(p.name)}</div>
+            <div class="cdm-spec-value">${p.value}${p.unit ? ' ' + p.unit : ''}</div>
+          </div>`
+        ).join('');
+
+        /* Equipment list (boolean YES params) */
+        const equipment = (params || []).filter(p => {
+          const v = (p.value || '').toString().toLowerCase();
+          return v === 'да' || v === 'yes' || v === 'true' || v === '1';
+        });
+        const equipHTML = equipment.length ? `
+          <div class="cdm-equip">
+            <h3 class="cdm-section-title">Car Equipment</h3>
+            <div class="cdm-equip-grid">
+              ${equipment.map(p => `<div class="cdm-equip-item">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="#6366F1" stroke="none"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4" stroke="#fff" stroke-width="2.5" fill="none"/></svg>
+                <span>${specLabel(p.name)}</span>
+              </div>`).join('')}
             </div>
-            <span class="pill" title="${tooltip}" style="${statusStyle}">${statusLabel}</span>
-            <button class="btn-secondary" id="closeCarModal">✕</button>
-          </div>
-          <div class="modal-body" style="display:grid;gap:16px;">
-            <div style="display:grid;gap:8px;">
-              <div style="width:100%;height:320px;border-radius:12px;overflow:hidden;border:1px solid var(--color-border);background:#f6f7f9;">
-                <img id="mainCarImg" src="${mainSrc}" alt="" style="width:100%;height:100%;object-fit:cover;">
+          </div>` : '';
+
+        card.innerHTML = `
+          <div class="cdm-close-wrap"><button class="cdm-close-btn" id="closeCarModal">✕</button></div>
+          <div class="cdm-layout">
+            <!-- LEFT: Image + price + thumbnails -->
+            <div class="cdm-left">
+              <div class="cdm-title-row">
+                <div>
+                  <h2 class="cdm-car-name">${car.brand} ${car.model}${car.trim ? (' ' + car.trim) : ''}</h2>
+                  <span class="cdm-car-type">${car.type || ''}</span>
+                </div>
+                <span class="cdm-status" title="${tooltip}" style="${statusStyle}">${statusLabel}</span>
               </div>
-              <div style="display:flex;gap:8px;overflow:auto;padding-bottom:4px;">
+              <div class="cdm-price-row">
+                <span class="cdm-price">€${(car.pricePerDay||0).toFixed(0)}</span>
+                <span class="cdm-per">/ ден</span>
+              </div>
+              <div class="cdm-main-img-wrap">
+                <img id="mainCarImg" src="${mainSrc}" alt="${car.brand} ${car.model}" class="cdm-main-img">
+              </div>
+              <div class="cdm-thumbs">
                 ${imgs.map((im, idx) => {
                   const s = toSrc(im);
-                  return `<img data-thumb="${idx}" src="${s}" alt="" style="width:96px;height:72px;object-fit:cover;border-radius:8px;border:${idx===currentIdx?'2px solid var(--color-primary)':'1px solid var(--color-border)'};cursor:pointer;">`;
+                  return `<img data-thumb="${idx}" src="${s}" alt="" class="cdm-thumb ${idx===currentIdx?'cdm-thumb-active':''}">`;
                 }).join('')}
               </div>
+              ${relRes.length ? `<div class="cdm-reservations">
+                <div class="cdm-res-title">Резервации:</div>
+                ${relRes.map(r => {
+                  const f = new Date(r.from).toLocaleString('bg-BG', { dateStyle:'short', timeStyle:'short' });
+                  const t = new Date(r.to).toLocaleString('bg-BG', { dateStyle:'short', timeStyle:'short' });
+                  return `<div class="cdm-res-line">${f} → ${t}</div>`;
+                }).join('')}
+              </div>` : ''}
             </div>
-            <div class="meta" style="flex-wrap:wrap;gap:8px;">${chips || '<span class="pill">Без параметри</span>'}</div>
-            <div class="row" style="justify-content:space-between;align-items:center;">
-              <div style="font-size:20px;font-weight:700;">€${(car.pricePerDay||0).toFixed(0)} <span style="font-size:13px;color:var(--color-text-3);font-weight:500;">/ ден</span></div>
-              ${available ? `<button class="btn-primary" id="reserveFromModal" style="height:40px;">Резервирай</button>` : ''}
+            <!-- RIGHT: Specs + Button + Equipment -->
+            <div class="cdm-right">
+              <h3 class="cdm-section-title">Technical Specification</h3>
+              <div class="cdm-specs-grid">
+                ${specCards || '<div class="cdm-spec-card"><div class="cdm-spec-label">Без параметри</div></div>'}
+              </div>
+              ${available ? `<button class="cdm-reserve-btn" id="reserveFromModal">Rent a car</button>` : ''}
+              ${equipHTML}
             </div>
-            ${relRes.length ? `<div style="font-size:13px;color:var(--color-text-3);">Резервации:<br>${relRes.map(r => {
-              const f = new Date(r.from).toLocaleString('bg-BG', { dateStyle:'short', timeStyle:'short' });
-              const t = new Date(r.to).toLocaleString('bg-BG', { dateStyle:'short', timeStyle:'short' });
-              return `${f} → ${t}`;
-            }).join('<br>')}</div>` : ''}
           </div>
         `;
         $('#closeCarModal', card).onclick = close;
@@ -1033,14 +1285,16 @@
   /* Booking Wizard (steps: 1 car/параметри, 2 шофьор, 3 фактура, 4 потвърждение)
      Показва кумулативно стъпките до текущия step; всяка следваща се отключва след "Напред". */
   function renderWizard() {
-    mountAdminIfNeeded(false);
-    mountSearchLayout(); // reuse container but full-width details
-    $('#filters').style.display = 'none';
-    $('#results').style.display = 'none';
+    app.className = 'landing-wrap';
+    app.innerHTML = `
+      ${siteHeaderHTML('reserve')}
+      <div class="reserve-page">
+        <div class="reserve-container" id="details"></div>
+      </div>
+      ${siteFooterHTML()}
+    `;
+    bindHamburger();
     const d = $('#details');
-    d.style.gridColumn = '1 / -1';
-    d.classList.remove('panel');
-    Object.assign(d.style, { border: 'none', boxShadow: 'none', background: 'transparent', padding: '0' });
     const paramsUrl = new URLSearchParams(location.hash.split('?')[1] || '');
     const step = Number(paramsUrl.get('step') || '1');
     const car = cars.find(c => c.id === paramsUrl.get('car')) || cars[0];
@@ -1078,13 +1332,14 @@
       navigate(`#/reserve?${q}`);
     };
 
+    const stepLabels = ['Кола & дати', 'Шофьор', 'Фактура', 'Потвърждение'];
     const stepper = `
-      <div class="toolbar">
-        <div class="tag ${step===1?'':'pill'}">Стъпка 1 • Кола & параметри</div>
-        <div class="tag ${step===2?'':'pill'}">Стъпка 2 • Шофьор</div>
-        <div class="tag ${step===3?'':'pill'}">Стъпка 3 • Фактура</div>
-        <div class="tag ${step===4?'':'pill'}">Потвърждение</div>
-        <div style="margin-left:auto;" class="tag">Колa: ${car.brand} ${car.model}</div>
+      <div class="wz-stepper">
+        ${stepLabels.map((label, i) => {
+          const num = i + 1;
+          const cls = num < step ? 'wz-step done' : num === step ? 'wz-step active' : 'wz-step';
+          return `<div class="${cls}"><span class="wz-step-num">${num < step ? '✓' : num}</span><span class="wz-step-label">${label}</span></div>`;
+        }).join('<div class="wz-step-line"></div>')}
       </div>
     `;
 
@@ -1094,108 +1349,131 @@
         const p = im && (im.thumb || im.large);
         return p ? `${API_BASE}${p}` : carPlaceholderSVG(`${car?.brand||''} ${car?.model||''}`, 240, 120, 210);
       })();
+      const priceDay = Number(car?.pricePerDay || 0);
+      const fromTs = draft.from ? Date.parse(draft.from) : null;
+      const toTs = draft.to ? Date.parse(draft.to) : null;
+      const days = (fromTs && toTs) ? Math.max(1, Math.ceil((toTs - fromTs) / 86400000)) : 1;
+      const total = priceDay * days;
       return `
-        <div class="panel" style="padding:12px; display:grid; grid-template-columns: 120px 1fr auto; gap:12px; align-items:center; margin-bottom:12px;">
-          <div style="border-radius:10px; overflow:hidden; border:1px solid var(--color-border); background:#f6f7f9;">
-            <img src="${firstImg}" alt="" style="width:120px;height:80px;object-fit:cover;">
+        <div class="wz-car-badge">
+          <div class="wz-car-img-wrap">
+            <img src="${firstImg}" alt="${car?.brand||''} ${car?.model||''}" class="wz-car-img">
           </div>
-          <div style="display:grid; gap:6px;">
-            <div style="font-weight:700;">${car?.brand||''} ${car?.model||''}</div>
-            <div class="meta" id="wizard-specs" style="flex-wrap:wrap;gap:6px;"></div>
+          <div class="wz-car-info">
+            <div class="wz-car-header">
+              <div>
+                <div class="wz-car-name">${car?.brand||''} ${car?.model||''}${car?.trim ? ' ' + car.trim : ''}</div>
+                <div class="wz-car-type">${car?.type || ''}</div>
+              </div>
+              <div class="wz-car-price-block">
+                <div class="wz-car-price">€${priceDay.toFixed(0)} <span class="wz-car-per">/ ден</span></div>
+                ${days > 1 ? `<div class="wz-car-total">${days} дни = €${total.toFixed(2)}</div>` : ''}
+                <a class="wz-change-btn" href="#/vehicles">Промени</a>
+              </div>
+            </div>
+            <div class="wz-car-specs" id="wizard-specs"></div>
           </div>
-          <a class="btn-secondary" href="#/" style="height:32px;display:grid;place-items:center;">Промени</a>
         </div>
       `;
     };
 
     const blockDates = `
-      <section id="step1" class="panel" style="margin-bottom:12px; padding:16px; display:grid; gap:14px;">
-        <div class="header" style="border:0; padding:0; margin-bottom:8px;"><h2>Дати и локации</h2></div>
-        <div class="grid-2">
+      <section id="step1" class="wz-section">
+        <h3 class="wz-section-title">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#6366F1" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          Дати и локации
+        </h3>
+        <div class="grid-2" style="gap:14px;">
           <div><div class="section-title">Място взимане</div><input id="wPick" class="input" value="${draft.pick || ''}" placeholder="Място"/></div>
           <div><div class="section-title">Място връщане</div><input id="wDrop" class="input" value="${draft.drop || ''}" placeholder="Място"/></div>
         </div>
-        <div class="grid-2">
+        <div class="grid-2" style="gap:14px; margin-top:14px;">
           <div><div class="section-title">От</div><input id="wFrom" type="datetime-local" step="1800" class="input" value="${(draft.from || '').slice(0,16)}"/></div>
           <div><div class="section-title">До</div><input id="wTo" type="datetime-local" step="1800" class="input" value="${(draft.to || '').slice(0,16)}"/></div>
         </div>
-        <div class="row" style="justify-content:flex-end; gap:8px;">
-          <button class="btn-primary" id="next1">Напред</button>
+        <div class="wz-actions">
+          <button class="wz-btn-primary" id="next1">Напред →</button>
         </div>
       </section>
     `;
 
     const block2 = `
-      <section id="step2" class="panel" style="margin-bottom:12px; padding:0;">
-        <div class="header"><h2>Данни на шофьора</h2></div>
-        <div style="padding:16px; display:grid; gap:14px;">
-          <div class="grid-3">
-            <div><div class="section-title">Име и фамилия</div><input id="dName" class="input" value="${draft.driver?.name || ''}"/></div>
-            <div><div class="section-title">Телефон</div><input id="dPhone" class="input" value="${draft.driver?.phone || ''}"/></div>
-            <div><div class="section-title">Имейл</div><input id="dEmail" class="input" value="${draft.driver?.email || ''}"/></div>
-          </div>
+      <section id="step2" class="wz-section">
+        <h3 class="wz-section-title">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#6366F1" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Данни на шофьора
+        </h3>
+        <div class="grid-2" style="gap:14px;">
+          <div><div class="section-title">Име и фамилия</div><input id="dName" class="input" value="${draft.driver?.name || ''}"/></div>
+          <div><div class="section-title">Телефон</div><input id="dPhone" class="input" value="${draft.driver?.phone || ''}"/></div>
+        </div>
+        <div class="grid-2" style="gap:14px; margin-top:14px;">
+          <div><div class="section-title">Имейл</div><input id="dEmail" class="input" value="${draft.driver?.email || ''}"/></div>
           <div><div class="section-title">№ шофьорска книжка</div><input id="dLicense" class="input" value="${draft.driver?.license || ''}"/></div>
-          <div class="row" style="justify-content:space-between;">
-            <button class="btn-secondary" id="back1">Назад</button>
-            <button class="btn-primary" id="next2">Напред</button>
-          </div>
+        </div>
+        <div class="wz-actions wz-actions-between">
+          <button class="wz-btn-secondary" id="back1">← Назад</button>
+          <button class="wz-btn-primary" id="next2">Напред →</button>
         </div>
       </section>
     `;
 
     const inv = draft.invoice || { type: 'individual' };
     const block3 = `
-      <section id="step3" class="panel" style="margin-bottom:12px; padding:0;">
-        <div class="header"><h2>Данни за фактура</h2></div>
-        <div style="padding:16px; display:grid; gap:14px;">
-          <div class="radios">
-            <label><input type="radio" name="invType" value="individual" ${inv.type!=='company'?'checked':''}> Физическо лице</label>
-            <label><input type="radio" name="invType" value="company" ${inv.type==='company'?'checked':''}> Юридическо лице</label>
+      <section id="step3" class="wz-section">
+        <h3 class="wz-section-title">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#6366F1" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 7L2 7"/></svg>
+          Данни за фактура
+        </h3>
+        <div class="wz-radio-group">
+          <label class="wz-radio ${inv.type!=='company'?'wz-radio-active':''}"><input type="radio" name="invType" value="individual" ${inv.type!=='company'?'checked':''}> Физическо лице</label>
+          <label class="wz-radio ${inv.type==='company'?'wz-radio-active':''}"><input type="radio" name="invType" value="company" ${inv.type==='company'?'checked':''}> Юридическо лице</label>
+        </div>
+        <div id="invIndividual" style="display:${inv.type!=='company'?'grid':'none'}; gap:14px; margin-top:16px;">
+          <div class="grid-2" style="gap:14px;">
+            <div><div class="section-title">Име и фамилия</div><input id="iNameInd" class="input" value="${(inv.name) || draft.driver?.name || ''}"/></div>
+            <div><div class="section-title">ЕГН</div><input id="iEgn" class="input" value="${inv.egn || ''}"/></div>
           </div>
-          <div id="invIndividual" style="display:${inv.type!=='company'?'grid':'none'}; gap:12px;">
-            <div class="grid-2">
-              <div><div class="section-title">Име и фамилия</div><input id="iNameInd" class="input" value="${(inv.name) || draft.driver?.name || ''}"/></div>
-              <div><div class="section-title">ЕГН</div><input id="iEgn" class="input" value="${inv.egn || ''}"/></div>
-            </div>
-            <div class="grid-2">
-              <div><div class="section-title">Адрес</div><input id="iAddrInd" class="input" value="${inv.addr || ''}"/></div>
-              <div><div class="section-title">Имейл</div><input id="iEmailInd" class="input" value="${inv.email || draft.driver?.email || ''}"/></div>
-            </div>
+          <div class="grid-2" style="gap:14px;">
+            <div><div class="section-title">Адрес</div><input id="iAddrInd" class="input" value="${inv.addr || ''}"/></div>
+            <div><div class="section-title">Имейл</div><input id="iEmailInd" class="input" value="${inv.email || draft.driver?.email || ''}"/></div>
           </div>
+        </div>
 
-          <div id="invCompany" style="display:${inv.type==='company'?'grid':'none'}; gap:12px;">
-            <div class="grid-2">
-              <div><div class="section-title">Име на фирмата</div><input id="iNameCo" class="input" value="${inv.name || ''}"/></div>
-              <div><div class="section-title">ЕИК</div><input id="iNumCo" class="input" value="${inv.num || ''}"/></div>
-            </div>
-            <div class="grid-2">
-              <div><div class="section-title">ДДС №</div><input id="iVatCo" class="input" value="${inv.vat || ''}"/></div>
-              <div><div class="section-title">МОЛ</div><input id="iMolCo" class="input" value="${inv.mol || ''}"/></div>
-            </div>
-            <div class="grid-2">
-              <div><div class="section-title">Адрес</div><input id="iAddrCo" class="input" value="${inv.addr || ''}"/></div>
-              <div><div class="section-title">Имейл</div><input id="iEmailCo" class="input" value="${inv.email || ''}"/></div>
-            </div>
-            <div class="grid-3">
-              <div><div class="section-title">Банка</div><input id="iBankCo" class="input" value="${inv.bank || ''}"/></div>
-              <div><div class="section-title">IBAN</div><input id="iIbanCo" class="input" value="${inv.iban || ''}"/></div>
-              <div><div class="section-title">BIC</div><input id="iBicCo" class="input" value="${inv.bic || ''}"/></div>
-            </div>
+        <div id="invCompany" style="display:${inv.type==='company'?'grid':'none'}; gap:14px; margin-top:16px;">
+          <div class="grid-2" style="gap:14px;">
+            <div><div class="section-title">Име на фирмата</div><input id="iNameCo" class="input" value="${inv.name || ''}"/></div>
+            <div><div class="section-title">ЕИК</div><input id="iNumCo" class="input" value="${inv.num || ''}"/></div>
           </div>
-          <div class="row" style="justify-content:space-between;">
-            <button class="btn-secondary" id="back2">Назад</button>
-            <button class="btn-primary" id="confirm">Резервирай</button>
+          <div class="grid-2" style="gap:14px;">
+            <div><div class="section-title">ДДС №</div><input id="iVatCo" class="input" value="${inv.vat || ''}"/></div>
+            <div><div class="section-title">МОЛ</div><input id="iMolCo" class="input" value="${inv.mol || ''}"/></div>
           </div>
+          <div class="grid-2" style="gap:14px;">
+            <div><div class="section-title">Адрес</div><input id="iAddrCo" class="input" value="${inv.addr || ''}"/></div>
+            <div><div class="section-title">Имейл</div><input id="iEmailCo" class="input" value="${inv.email || ''}"/></div>
+          </div>
+          <div class="grid-3" style="gap:14px;">
+            <div><div class="section-title">Банка</div><input id="iBankCo" class="input" value="${inv.bank || ''}"/></div>
+            <div><div class="section-title">IBAN</div><input id="iIbanCo" class="input" value="${inv.iban || ''}"/></div>
+            <div><div class="section-title">BIC</div><input id="iBicCo" class="input" value="${inv.bic || ''}"/></div>
+          </div>
+        </div>
+        <div class="wz-actions wz-actions-between">
+          <button class="wz-btn-secondary" id="back2">← Назад</button>
+          <button class="wz-btn-primary" id="confirm">Резервирай</button>
         </div>
       </section>
     `;
 
     const block4 = `
-      <section id="step4" class="panel" style="margin-bottom:12px; padding:0;">
-        <div class="header"><h2>Резервация изпратена</h2></div>
-        <div style="padding:16px;">
-          <p>Вашата заявка № <strong>${paramsUrl.get('id') || draft.id}</strong> е получена и очаква одобрение. Ще се свържем с вас съвсем скоро.</p>
+      <section id="step4" class="wz-section wz-section-confirm">
+        <div class="wz-confirm-icon">
+          <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="#10B981" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
         </div>
+        <h3 class="wz-confirm-title">Резервацията е изпратена!</h3>
+        <p class="wz-confirm-text">Вашата заявка № <strong>${paramsUrl.get('id') || draft.id}</strong> е получена и очаква одобрение.</p>
+        <p class="wz-confirm-sub">Ще се свържем с вас съвсем скоро.</p>
       </section>
     `;
 
@@ -1218,17 +1496,46 @@
     };
 
     d.innerHTML = `
-      <div class="header"><h2>Резервация</h2></div>
+      <h2 class="wz-page-title">Резервация</h2>
       ${stepper}
       ${renderCarBadge(car)}
-      ${blockDates}
-      ${step>=2 ? block2 : ''}
-      ${step>=3 ? block3 : ''}
-      ${step>=4 ? block4 : ''}
+      ${step === 1 ? blockDates : ''}
+      ${step === 2 ? block2 : ''}
+      ${step === 3 ? block3 : ''}
+      ${step === 4 ? block4 : ''}
     `;
 
+    // Load car specs for badge (all steps) — use SVG icons like car listing cards
+    const wzSpecIcon = (name) => {
+      const n = (name || '').toLowerCase();
+      if (n.includes('скоростна') || n.includes('gear'))
+        return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
+      if (n.includes('гориво') || n.includes('fuel'))
+        return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6"><path d="M16 3h1a2 2 0 0 1 2 2v11.5a2.5 2.5 0 1 1-5 0V4a1 1 0 0 1 1-1Z"/><path d="M6 3h8v18H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M6 14h8"/><path d="M18 7h1.5a1.5 1.5 0 0 1 0 3H18"/><path d="M8 7h2"/></svg>`;
+      if (n.includes('врати') || n.includes('door'))
+        return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6"><path d="M6 3h12v18H6z"/><path d="M14 12h2"/></svg>`;
+      if (n.includes('седалки') || n.includes('места') || n.includes('seat'))
+        return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6"><path d="M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z"/><path d="M5.5 21a8.38 8.38 0 0 1 13 0"/></svg>`;
+      if (n.includes('конски') || n.includes('мощност') || n.includes('horse') || n.includes('power'))
+        return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6"><path d="M12 2v7l-2 2"/><path d="m12 9 2 2"/><circle cx="12" cy="13" r="8"/></svg>`;
+      if (n.includes('багаж') || n.includes('luggage'))
+        return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6"><rect x="5" y="7" width="14" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M9 11v4"/><path d="M15 11v4"/></svg>`;
+      if (n.includes('вид кола') || n.includes('тип') || n.includes('type'))
+        return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6"><path d="M5 17h14M5 17a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2l2-3h6l2 3h2a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2"/><circle cx="7.5" cy="17" r="2"/><circle cx="16.5" cy="17" r="2"/></svg>`;
+      if (n.includes('климат') || n.includes('air'))
+        return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6"><path d="m12 2 0 20"/><path d="m4.93 4.93 14.14 14.14"/><path d="m4.93 19.07 14.14-14.14"/><path d="m3 12 18 0"/></svg>`;
+      return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l2 2"/></svg>`;
+    };
+    loadCarParams(car?.id).then(list => {
+      const el = $('#wizard-specs');
+      if (!el) return;
+      const items = (list || []).filter(p => p?.value !== null && p?.value !== '')
+        .map(p => `<div class="wz-spec-item">${wzSpecIcon(p.name)}<span>${p.value}${p.unit ? ' ' + p.unit : ''}</span></div>`).join('');
+      el.innerHTML = items || '';
+    }).catch(()=>{});
+
     // Стъпка 1
-    if (step >= 1) {
+    if (step === 1) {
       const validateStep1 = () => {
         clearErrors();
         let ok = true;
@@ -1253,13 +1560,6 @@
       };
       bindDateSnap($('#wFrom'), 'from');
       bindDateSnap($('#wTo'), 'to');
-      loadCarParams(car?.id).then(list => {
-        const el = $('#wizard-specs');
-        if (!el) return;
-        const chips = (list || []).filter(p => p?.value !== null && p?.value !== '')
-          .map(p => `<span class="pill" title="${p.name}">${getParamIcon(p.name)} ${p.value}</span>`).join('');
-        el.innerHTML = chips || '';
-      }).catch(()=>{});
       apiFetch('/api/locations').then(locs => {
         const labels = (locs || []).map(l => l.label);
         attachTypeahead($('#wPick'), labels);
@@ -1274,7 +1574,7 @@
     }
 
     // Стъпка 2
-    if (step >= 2) {
+    if (step === 2) {
       const errorMessages = {
         name: {
           empty: "Моля, въведете име и фамилия",
@@ -1438,7 +1738,7 @@
     }
 
     // Стъпка 3
-    if (step >= 3) {
+    if (step === 3) {
       const invState = { ...(draft.invoice || {}), type: draft.invoice?.type === 'company' ? 'company' : 'individual' };
       const normSpaces = (v='') => v.replace(/\s+/g, ' ').trim();
       const setFieldState = (inputEl, res, showError) => {
@@ -1760,6 +2060,9 @@
         invState.type = r.value;
         $('#invIndividual').style.display = r.value === 'company' ? 'none' : 'grid';
         $('#invCompany').style.display = r.value === 'company' ? 'grid' : 'none';
+        // Update radio button active state
+        $$('.wz-radio').forEach(lbl => lbl.classList.remove('wz-radio-active'));
+        r.closest('.wz-radio')?.classList.add('wz-radio-active');
         updateConfirmBtn();
       });
       $('#back2')?.addEventListener('click', () => gotoStep(2));
@@ -1834,6 +2137,7 @@
           <a class="tag ${active==='settings'?'':'pill'}" href="#/admin/settings">Настройки</a>
           <a class="tag ${active==='reservations'?'':'pill'}" href="#/admin/reservations">Резервации</a>
           <a class="tag ${active==='invoices'?'':'pill'}" href="#/admin/invoices">Фактури</a>
+          <a class="tag ${active==='policies'?'':'pill'}" href="#/admin/policies">Политики</a>
         </div>
       </div>
     `;
@@ -3552,8 +3856,1084 @@
     loadLocations();
   }
 
+  /* ===== Vehicles Page ===== */
+  let vpActiveTab = 'all';
+
+  function mountVehiclesPage() {
+    app.className = 'landing-wrap';
+
+    // Resolve type options from params
+    const typeDef = (paramDefs || []).find(p => p.name === 'Вид кола' && p.type === 'ENUM');
+    const typeOpts = typeDef?.options && Array.isArray(typeDef.options) && typeDef.options.length
+      ? typeDef.options : ['Лека кола', 'Джип', 'Товарен бус'];
+    const gearDef = (paramDefs || []).find(p => p.name === 'Скоростна кутия' && p.type === 'ENUM');
+    const gearOpts = gearDef?.options && Array.isArray(gearDef.options) && gearDef.options.length
+      ? ['Без значение', ...gearDef.options] : ['Без значение', 'Автоматик', 'Ръчна'];
+
+    // Only show car types that actually have at least one car
+    const existingTypes = [...new Set(cars.map(c => c.type).filter(Boolean))];
+    const activeTypeOpts = typeOpts.filter(t => existingTypes.includes(t));
+
+    // Font Awesome icon mapping for car types
+    const typeIconFA = (type) => {
+      const t = (type || '').toLowerCase();
+      if (t.includes('джип') || t.includes('suv') || t.includes('офроуд'))
+        return '<i class="fa-solid fa-truck-monster" style="font-size:16px;"></i>';
+      if (t.includes('товарен') || t.includes('бус') || t.includes('ван') || t.includes('van'))
+        return '<i class="fa-solid fa-truck" style="font-size:16px;"></i>';
+      if (t.includes('пътнически'))
+        return '<i class="fa-solid fa-van-shuttle" style="font-size:16px;"></i>';
+      if (t.includes('лека') || t.includes('sedan') || t.includes('седан'))
+        return '<i class="fa-solid fa-car" style="font-size:16px;"></i>';
+      if (t.includes('кабрио') || t.includes('cabriolet'))
+        return '<i class="fa-solid fa-car-rear" style="font-size:16px;"></i>';
+      if (t.includes('хечбек') || t.includes('hatch'))
+        return '<i class="fa-solid fa-car-side" style="font-size:16px;"></i>';
+      if (t.includes('комби') || t.includes('estate') || t.includes('wagon'))
+        return '<i class="fa-solid fa-car-side" style="font-size:16px;"></i>';
+      if (t.includes('купе') || t.includes('coupe'))
+        return '<i class="fa-solid fa-car-rear" style="font-size:16px;"></i>';
+      if (t.includes('електр') || t.includes('electric'))
+        return '<i class="fa-solid fa-charging-station" style="font-size:16px;"></i>';
+      return '<i class="fa-solid fa-car" style="font-size:16px;"></i>';
+    };
+
+    const tabs = [
+      { id: 'all', label: 'Всички типове', icon: '<i class="fa-solid fa-border-all" style="font-size:16px;"></i>' },
+      ...activeTypeOpts.map(t => ({ id: t, label: t, icon: typeIconFA(t) }))
+    ];
+
+    app.innerHTML = `
+      ${siteHeaderHTML('vehicles')}
+
+      <!-- FILTER BAR -->
+      <div class="vp-filter-wrap">
+        <div class="hero-booking" id="vpFilterBar" style="max-width:100%;margin:0 auto;">
+          <h2>Book your car</h2>
+        </div>
+      </div>
+
+      <!-- TABS + GRID -->
+      <div class="vp-tabs">
+        <h2 class="vp-tabs-title">Селектирай по тип кола</h2>
+        <div class="vp-tabs-row" id="vpTabs">
+          ${tabs.map(t => `<button class="vp-tab ${t.id === vpActiveTab ? 'active' : ''}" data-tab="${t.id}">${t.icon} ${t.label}</button>`).join('')}
+        </div>
+      </div>
+
+      <div class="vp-grid-wrap">
+        <div class="results-grid" id="resultsGrid" style="grid-template-columns:repeat(3, minmax(280px, 1fr));"></div>
+      </div>
+
+      ${siteFooterHTML()}
+      <section class="panel details" id="details" style="display:none;"></section>
+    `;
+    bindHamburger();
+
+    // Render filter bar
+    renderVpFilters(gearOpts);
+
+    // Tab clicks
+    $$('.vp-tab').forEach(btn => btn.onclick = () => {
+      vpActiveTab = btn.getAttribute('data-tab');
+      $$('.vp-tab').forEach(b => b.classList.toggle('active', b.getAttribute('data-tab') === vpActiveTab));
+      renderVpResults();
+    });
+
+    // Initial render
+    renderVpResults();
+  }
+
+  async function renderVpFilters(gearOpts) {
+    const typeDef = (paramDefs || []).find(p => p.name === 'Вид кола' && p.type === 'ENUM');
+    const typeOptions = typeDef?.options && Array.isArray(typeDef.options) && typeDef.options.length
+      ? ['Всички', ...typeDef.options] : ['Всички', 'Лека кола', 'Джип', 'Товарен бус'];
+    let locations = [];
+    try { locations = await apiFetch('/api/locations'); } catch {}
+    const bar = $('#vpFilterBar');
+    // Same form as home page hero booking
+    bar.innerHTML = `
+      <div class="vp-form-grid">
+        <div class="hb-group ta-wrap">
+          <label>Място на взимане</label>
+          <div class="hb-input-wrap">
+            <input id="vpPick" class="hb-input" placeholder="Въведи локация" value="${filterState.pick||''}">
+            <span class="hb-icon">${svgLocationDot}</span>
+          </div>
+        </div>
+        <div class="hb-group ta-wrap">
+          <label>Място на връщане</label>
+          <div class="hb-input-wrap">
+            <input id="vpDrop" class="hb-input" placeholder="Въведи локация" value="${filterState.drop||''}">
+            <span class="hb-icon">${svgLocationDot}</span>
+          </div>
+        </div>
+        <div class="hb-group">
+          <label>Дата на взимане</label>
+          <div class="hb-input-wrap">
+            <input id="vpFrom" type="datetime-local" class="hb-input hb-input-noicon" step="1800" value="${(filterState.from||'').slice(0,16)}">
+          </div>
+        </div>
+        <div class="hb-group">
+          <label>Дата на връщане</label>
+          <div class="hb-input-wrap">
+            <input id="vpTo" type="datetime-local" class="hb-input hb-input-noicon" step="1800" value="${(filterState.to||'').slice(0,16)}">
+          </div>
+        </div>
+      </div>
+      <button id="vpSubmit" class="hb-submit" style="margin-top:14px;">Search</button>
+    `;
+    const labels = (locations||[]).map(l => l.label);
+    attachTypeahead($('#vpPick'), labels);
+    attachTypeahead($('#vpDrop'), labels);
+    // Sync filters
+    $('#vpPick').oninput = (e) => { filterState.pick = e.target.value; };
+    $('#vpPick').onchange = (e) => { filterState.pick = e.target.value; };
+    $('#vpDrop').oninput = (e) => { filterState.drop = e.target.value; };
+    $('#vpDrop').onchange = (e) => { filterState.drop = e.target.value; };
+    const bindSnap = (el, key) => {
+      if (!el) return;
+      const apply = () => { const v = snapMinutesLocal(el.value); el.value = v; filterState[key] = v; };
+      el.onfocus = (e) => e.target.showPicker?.();
+      el.onclick = (e) => e.target.showPicker?.();
+      el.onchange = apply; el.oninput = apply;
+    };
+    bindSnap($('#vpFrom'), 'from');
+    bindSnap($('#vpTo'), 'to');
+    $('#vpSubmit').onclick = () => { renderVpResults(); };
+  }
+
+  function renderVpResults() {
+    // Apply all filters
+    let list = cars.filter(c => {
+      const q = filterState.query;
+      if (q && !(c.brand.toLowerCase().includes(q) || c.model.toLowerCase().includes(q))) return false;
+      const norm = (v) => (v || '').toString().trim().toLowerCase();
+      const mapTx = (v) => {
+        const n = norm(v);
+        if (n.includes('автомат') || n === 'automatic') return 'automatic';
+        if (n.includes('ръч') || n === 'manual') return 'manual';
+        return n;
+      };
+      if (filterState.transmission !== 'Any') {
+        if (mapTx(c.transmission) !== mapTx(filterState.transmission)) return false;
+      }
+      if (filterState.type !== 'Всички' && c.type !== filterState.type) return false;
+      // Tab filter
+      if (vpActiveTab !== 'all' && c.type !== vpActiveTab) return false;
+      return true;
+    });
+
+    const grid = $('#resultsGrid');
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    if (!list.length) {
+      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:48px 0;color:#9CA3AF;font-size:16px;">Няма намерени автомобили за тези филтри.</div>';
+      return;
+    }
+
+    list.forEach((c) => {
+      const card = document.createElement('article');
+      card.className = 'cc';
+      const firstImg = (() => {
+        const im = (c.images || [])[0];
+        const p = im && (im.thumb || im.large);
+        return p ? `${API_BASE}${p}` : null;
+      })();
+      const priceDay = Number(c.pricePerDay || 0);
+      card.innerHTML = `
+        <div class="cc-img" data-car-details="${c.id}">
+          ${firstImg
+            ? `<img alt="${c.brand} ${c.model}" src="${firstImg}" loading="lazy" class="cc-photo">`
+            : `<svg viewBox="0 0 400 200" class="cc-sil"><path d="M50 140 Q60 100 120 90 L160 70 Q200 55 260 70 L310 90 Q360 100 370 140 Z" fill="#9CA3AF"/><circle cx="120" cy="150" r="22" fill="#6B7280"/><circle cx="120" cy="150" r="12" fill="#D1D5DB"/><circle cx="310" cy="150" r="22" fill="#6B7280"/><circle cx="310" cy="150" r="12" fill="#D1D5DB"/><rect x="40" y="140" width="340" height="6" rx="3" fill="#9CA3AF"/></svg>`
+          }
+        </div>
+        <div class="cc-body">
+          <div class="cc-head">
+            <div>
+              <h3 class="cc-name" data-car-details="${c.id}">${c.brand} ${c.model}</h3>
+              <p class="cc-type">${c.type || ''}</p>
+            </div>
+            <div class="cc-price-block">
+              <span class="cc-price">€${priceDay.toFixed(0)}</span>
+              <span class="cc-per">на ден</span>
+            </div>
+          </div>
+          <div id="vp-specs-${c.id}" class="cc-specs"></div>
+          <button class="cc-btn" data-details="${c.id}">
+            Разгледай
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+        </div>
+      `;
+      grid.appendChild(card);
+
+      // Specs — same rendering as homepage
+      loadCarParams(c.id).then(params => {
+        const el = document.getElementById(`vp-specs-${c.id}`);
+        if (!el) return;
+        const norm = (params || []).map(p => ({
+          name: p.name || '',
+          lower: (p.name || '').toLowerCase(),
+          value: p.value ?? p.valueText ?? p.valueEnum ?? p.valueNum ?? ''
+        }));
+        const valOf = (names, fallback, fuzzy=false) => {
+          const list = Array.isArray(names) ? names : [names];
+          let found = norm.find(p => list.includes(p.name));
+          if (!found && fuzzy) {
+            const needle = list.map(s => s.toLowerCase());
+            found = norm.find(p => needle.some(n => p.lower.includes(n)));
+          }
+          const val = found?.value;
+          if (val === undefined || val === null || val === '') return fallback;
+          return val;
+        };
+        const trans = valOf(['Скоростна кутия'], c.transmission || 'Automatic', true);
+        const fuel = valOf(['Гориво','Тип гориво'], c.fuel || 'Fuel', true);
+        const specs = [
+          { icon: gearIcon(), text: trans },
+          { icon: fuelIcon(), text: fuel },
+          { icon: acIcon(), text: 'Air Conditioner' }
+        ];
+        el.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${s.text}</span></div>`).join('');
+      }).catch(()=>{});
+
+      // Availability
+      const selFrom = filterState.from;
+      const selTo = filterState.to;
+      const isService = () => { const s = (c.status||'').toString().toLowerCase(); return s.includes('серв') || s==='service'; };
+      const hasOverlap = () => {
+        if (!selFrom || !selTo) return false;
+        const rel = (reservations||[]).filter(r => r.carId===c.id && !(r.status && r.status.toUpperCase()==='DECLINED'));
+        return rel.some(r => isOverlap(selFrom, selTo, r.from, r.to));
+      };
+      const available = !isService() && !hasOverlap();
+      const btn = card.querySelector('.cc-btn');
+      if (btn && !available) { btn.disabled = true; btn.classList.add('cc-btn-disabled'); }
+    });
+
+    // Clicks
+    $$('[data-car-details]').forEach(el => el.onclick = () => openCarDetails(el.getAttribute('data-car-details')));
+    $$('[data-details]').forEach(b => b.onclick = (e) => {
+      const id = e.currentTarget.getAttribute('data-details');
+      const q = new URLSearchParams({ car:id, pick:filterState.pick, drop:filterState.drop||filterState.pick, from:filterState.from||'', to:filterState.to||'' }).toString();
+      navigate(`#/reserve?${q}&step=1`);
+    });
+  }
+
+  /* ===== ABOUT US PAGE ===== */
+  function mountAboutUsPage() {
+    app.className = 'landing-wrap';
+    app.innerHTML = `
+      ${siteHeaderHTML('about-us')}
+
+      <!-- ABOUT HERO -->
+      <section class="au-hero">
+        <h1 class="au-hero-title">За нас</h1>
+        <p class="au-hero-breadcrumb"><a href="#/">Начало</a> / За нас</p>
+      </section>
+
+      <!-- WHY CHOOSE US -->
+      <section class="au-why-section">
+        <div class="au-why-inner">
+          <div class="au-why-left">
+            <h2 class="au-why-heading">Всяко пътуване<br>да бъде<br>незабравимо</h2>
+          </div>
+          <div class="au-why-right">
+            <div class="au-why-grid">
+              <div class="au-why-card">
+                <div class="au-why-icon">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M8 12l2 2 4-4"/></svg>
+                </div>
+                <h3>Разнообразие от марки</h3>
+                <p>Разполагаме с богат автопарк от различни марки и класове автомобили, за да отговорим на всяка нужда — от градски коли до просторни джипове.</p>
+              </div>
+              <div class="au-why-card">
+                <div class="au-why-icon">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14l-5-4.87 6.91-1.01z"/></svg>
+                </div>
+                <h3>Отлична поддръжка</h3>
+                <p>Нашият екип е на разположение 7 дни в седмицата, за да ви помогне с резервации, въпроси и всичко необходимо по време на наема.</p>
+              </div>
+              <div class="au-why-card">
+                <div class="au-why-icon">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                </div>
+                <h3>Максимална свобода</h3>
+                <p>Без скрити такси и ограничения. Наемете кола и пътувайте свободно из цялата страна с пълна застраховка и пътна помощ.</p>
+              </div>
+              <div class="au-why-card">
+                <div class="au-why-icon">
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                </div>
+                <h3>Гъвкавост по всяко време</h3>
+                <p>Резервирайте онлайн бързо и лесно. Предлагаме гъвкави условия за наем — от един ден до няколко месеца, с възможност за удължаване.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIDEO SECTION -->
+      <section class="au-video-section">
+        <div class="au-video-inner">
+          <div class="au-video-overlay">
+            <button class="au-play-btn" id="auPlayBtn">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- STATS -->
+      <section class="au-stats-section">
+        <div class="au-stats-inner">
+          <div class="au-stat">
+            <span class="au-stat-value">2 000+</span>
+            <span class="au-stat-label">Доволни клиенти</span>
+          </div>
+          <div class="au-stat">
+            <span class="au-stat-value">${cars.length}+</span>
+            <span class="au-stat-label">Автомобила в автопарка</span>
+          </div>
+          <div class="au-stat">
+            <span class="au-stat-value">10+</span>
+            <span class="au-stat-label">Години опит</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- MEMORIES -->
+      <section class="au-memories-section">
+        <div class="au-memories-inner">
+          <div class="au-memories-text">
+            <h2>Защо клиентите ни<br>се връщат отново</h2>
+            <p>Ние вярваме, че качествената услуга се гради на доверие, прозрачност и внимание към детайла. Всеки автомобил е поддържан в отлично състояние.</p>
+            <div class="au-memories-checks">
+              <div class="au-mem-check">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366F1" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+                <span>Всички автомобили са технически изправни и редовно обслужвани.</span>
+              </div>
+              <div class="au-mem-check">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366F1" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+                <span>Пълна застраховка „Каско" и „Гражданска отговорност" за спокойно пътуване.</span>
+              </div>
+              <div class="au-mem-check">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366F1" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+                <span>Прозрачно ценообразуване — без скрити такси и допълнителни разходи.</span>
+              </div>
+              <div class="au-mem-check">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+                <span>Плащане единствено по банков път — удобно и сигурно.</span>
+              </div>
+              <div class="au-mem-check">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6366F1" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+                <span>Бърза и лесна онлайн резервация с потвърждение до минути.</span>
+              </div>
+              <div class="au-mem-check">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
+                <span>Гъвкави условия за удължаване на наемния период по всяко време.</span>
+              </div>
+            </div>
+          </div>
+          <div class="au-memories-img">
+            <div class="au-memories-placeholder">
+              <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" stroke-width="1"><rect x="2" y="2" width="20" height="20" rx="4"/><circle cx="8" cy="8" r="2"/><path d="M2 16l5-5 3 3 4-4 8 8"/></svg>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- REVIEWS -->
+      <section class="au-reviews-section">
+        <h2 class="au-reviews-title">Какво казват нашите клиенти</h2>
+        <div class="au-reviews-grid">
+          <div class="au-review-card">
+            <div class="au-review-quote">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="#6366F1" opacity="0.15"><path d="M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z"/></svg>
+            </div>
+            <p class="au-review-text">Наех кола за семейна почивка и останах изключително доволен. Автомобилът беше чист, в перфектно състояние, а обслужването — бързо и професионално. Определено ще се върна отново!</p>
+            <div class="au-review-author">
+              <div class="au-review-avatar"></div>
+              <div>
+                <div class="au-review-name">Георги Димитров</div>
+                <div class="au-review-stars">★★★★★</div>
+              </div>
+            </div>
+          </div>
+          <div class="au-review-card">
+            <div class="au-review-quote">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="#6366F1" opacity="0.15"><path d="M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z"/></svg>
+            </div>
+            <p class="au-review-text">Много удобен процес на резервация. Плащането по банков път е прозрачно и без изненади. Колата беше точно както в описанието. Препоръчвам на всеки, който търси надеждна услуга!</p>
+            <div class="au-review-author">
+              <div class="au-review-avatar"></div>
+              <div>
+                <div class="au-review-name">Мария Иванова</div>
+                <div class="au-review-stars">★★★★★</div>
+              </div>
+            </div>
+          </div>
+          <div class="au-review-card">
+            <div class="au-review-quote">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="#6366F1" opacity="0.15"><path d="M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z"/></svg>
+            </div>
+            <p class="au-review-text">Използвам услугите им за служебни пътувания от година насам. Винаги коректни, гъвкави и отзивчиви. Фактурирането е бързо и точно. Отлично партньорство за бизнеса!</p>
+            <div class="au-review-author">
+              <div class="au-review-avatar"></div>
+              <div>
+                <div class="au-review-name">Петър Стоянов</div>
+                <div class="au-review-stars">★★★★★</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ -->
+      <section class="au-faq-section" id="faq">
+        <h2 class="au-faq-title">Често задавани въпроси</h2>
+        <div class="au-faq-list" id="auFaqList">
+          <div class="au-faq-item open">
+            <button class="au-faq-q">
+              <span>Как мога да резервирам автомобил?</span>
+              <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="au-faq-a">
+              <p>Резервацията е бърза и лесна — изберете автомобил от нашия автопарк, посочете дати за наемане и връщане, попълнете данните си и изпратете заявка. Ще се свържем с вас за потвърждение и подробности за плащането по банков път.</p>
+            </div>
+          </div>
+          <div class="au-faq-item">
+            <button class="au-faq-q">
+              <span>Какъв е начинът на плащане?</span>
+              <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="au-faq-a">
+              <p>Плащането се извършва единствено по банков път. След потвърждение на резервацията ще получите проформа фактура с банковите реквизити. Наемът се счита за потвърден след получаване на плащането по нашата банкова сметка.</p>
+            </div>
+          </div>
+          <div class="au-faq-item">
+            <button class="au-faq-q">
+              <span>Какви документи са необходими за наемане?</span>
+              <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="au-faq-a">
+              <p>Необходими са валидна шофьорска книжка (минимум 2 години стаж), лична карта или паспорт и навършени 21 години. За чуждестранни граждани може да се изисква международна шофьорска книжка.</p>
+            </div>
+          </div>
+          <div class="au-faq-item">
+            <button class="au-faq-q">
+              <span>Включена ли е застраховка в цената на наема?</span>
+              <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="au-faq-a">
+              <p>Да, всички наши автомобили са с пълна застраховка „Гражданска отговорност" и „Каско". Допълнителни покрития и пътна помощ могат да бъдат уговорени при резервацията.</p>
+            </div>
+          </div>
+          <div class="au-faq-item">
+            <button class="au-faq-q">
+              <span>Мога ли да удължа наемния период?</span>
+              <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="au-faq-a">
+              <p>Да, можете да удължите наемния период, като се свържете с нас поне 24 часа преди крайната дата. Удължаването подлежи на наличност и се заплаща допълнително по банков път. Ще получите актуализирана фактура.</p>
+            </div>
+          </div>
+          <div class="au-faq-item">
+            <button class="au-faq-q">
+              <span>Какви са условията за анулиране на резервация?</span>
+              <svg class="au-faq-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div class="au-faq-a">
+              <p>Безплатно анулиране е възможно до 48 часа преди началото на наемния период. При по-късно анулиране може да бъде удържана неустойка съгласно общите условия. Възстановяването на сумата се извършва по банков път.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- CTA BANNER -->
+      <section class="au-cta-section">
+        <div class="au-cta-inner">
+          <div class="au-cta-text">
+            <h2>Търсите автомобил под наем?</h2>
+            <p class="au-cta-phone">${companyInfo.phone || '+359 888 810 469'}</p>
+            <p class="au-cta-desc">Свържете се с нас по телефон или разгледайте нашия автопарк онлайн. Ще ви помогнем да намерите идеалния автомобил за вашето пътуване.</p>
+            <a href="#/vehicles" class="au-cta-btn">Разгледай автопарка</a>
+          </div>
+        </div>
+      </section>
+
+      ${siteFooterHTML()}
+    `;
+    bindHamburger();
+
+    // FAQ accordion
+    const faqList = $('#auFaqList');
+    if (faqList) {
+      faqList.querySelectorAll('.au-faq-q').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const item = btn.closest('.au-faq-item');
+          const wasOpen = item.classList.contains('open');
+          faqList.querySelectorAll('.au-faq-item').forEach(i => i.classList.remove('open'));
+          if (!wasOpen) item.classList.add('open');
+        });
+      });
+    }
+  }
+
+  /* ===== POLICIES PAGE ===== */
+  // ── Policy placeholder tokens ──
+  // These tokens are stored in DB and replaced at render-time with current companyInfo.
+  // Admin sees the tokens (e.g. {{company_name}}); public site sees the real values.
+  const POLICY_PLACEHOLDERS = {
+    '{{company_name}}':    () => (companyInfo||{}).name    || 'Meniar.com',
+    '{{company_eik}}':     () => (companyInfo||{}).eik     || '—',
+    '{{company_address}}': () => { const c=companyInfo||{}; return (c.city ? 'гр. '+c.city+', ' : '')+(c.address || 'България'); },
+    '{{company_email}}':   () => (companyInfo||{}).email   || 'info@meniar.com',
+    '{{company_phone}}':   () => (companyInfo||{}).phone   || '+359 888 810 469',
+    '{{company_phone_clean}}': () => ((companyInfo||{}).phone || '+359888810469').replace(/[\s-]/g,''),
+  };
+
+  /** Replace {{tokens}} in html with actual companyInfo values */
+  function resolvePolicyPlaceholders(html) {
+    if (!html) return html;
+    let result = html;
+    for (const [token, resolver] of Object.entries(POLICY_PLACEHOLDERS)) {
+      // Use split/join for global replace (no regex escaping needed)
+      result = result.split(token).join(resolver());
+    }
+    return result;
+  }
+
+  function getPolicySections() {
+    return [
+    { slug: 'privacy', title: 'Политика за поверителност', icon: 'fa-shield-halved',
+      defaultContent: `<p class="pol-meta">Дата на последна актуализация: 08.02.2026</p>
+<p><strong>{{company_name}}</strong> (администратор на данните), ЕИК {{company_eik}}, с адрес {{company_address}}, обработва лични данни според GDPR (EU 2016/679) и Закона за защита на личните данни.</p>
+
+<h3>Какви данни събираме</h3>
+<ul>
+<li><strong>Идентичност:</strong> име, ЕГН/ЕИК, дата на раждане, адрес, телефон, имейл.</li>
+<li><strong>Шофьорски права:</strong> номер, дата на изтичане.</li>
+<li><strong>Резервация:</strong> дати, локации, автомобил.</li>
+<li><strong>Плащане:</strong> данни за банков превод, депозит.</li>
+<li><strong>Уеб:</strong> IP, cookies, посещения (Google Analytics).</li>
+</ul>
+
+<h3>Цели на обработката</h3>
+<ul>
+<li>Изпълнение на договор (резервация, наем).</li>
+<li>Маркетинг (само при изрично съгласие).</li>
+<li>Законови задължения (застраховки, данъци).</li>
+</ul>
+<p><strong>Основание:</strong> договор, съгласие, закон.</p>
+
+<h3>Към кого споделяме данни</h3>
+<p>Подизпълнители (застрахователи, платежни платформи), власти (ако е необходимо по закон). <strong>Не продаваме лични данни на трети страни.</strong></p>
+
+<h3>Вашите права</h3>
+<p>Достъп, коригиране, изтриване, възражение, преносимост. Пишете ни на <a href="mailto:{{company_email}}">{{company_email}}</a>. Срок за отговор: <strong>1 месец</strong>.</p>
+
+<h3>Бисквитки</h3>
+<p>Вижте нашата <a href="#/policies" onclick="setTimeout(()=>{const el=document.getElementById('pol-cookies');if(el)el.scrollIntoView({behavior:'smooth'})},100)">Политика за бисквитки</a>.</p>
+
+<h3>Срок на съхранение</h3>
+<ul>
+<li>Договорни данни – <strong>5 години</strong>.</li>
+<li>Маркетинг – до отмяна на съгласието.</li>
+</ul>
+
+<h3>Свържете се с нас</h3>
+<p>Имейл: <a href="mailto:{{company_email}}">{{company_email}}</a> | Телефон: <a href="tel:{{company_phone_clean}}">{{company_phone}}</a></p>
+<p>Жалби: Комисия за защита на личните данни (<a href="https://www.cpdp.bg" target="_blank" rel="noopener">www.cpdp.bg</a>).</p>` },
+
+    { slug: 'terms', title: 'Условия за ползване', icon: 'fa-file-contract',
+      defaultContent: `<p class="pol-meta">Дата на последна актуализация: 08.02.2026</p>
+
+<h3>Обхват</h3>
+<p>Тези условия регулират наема на автомобили чрез сайта на <strong>{{company_name}}</strong>. Клиентът (Наемател) приема условията при извършване на резервация.</p>
+
+<h3>Изисквания за Наемател</h3>
+<ul>
+<li>Навършени <strong>21 години</strong> (23+ за премиум класове).</li>
+<li>Минимум <strong>1 година</strong> шофьорски опит.</li>
+<li>Валидна шофьорска книжка (ЕС формат).</li>
+<li>Кредитна/дебитна карта за депозит.</li>
+<li>Допълнителен водач – <strong>€10/ден</strong>.</li>
+</ul>
+
+<h3>Цената включва</h3>
+<ul>
+<li>Наем на автомобила.</li>
+<li>Застраховка „Гражданска отговорност".</li>
+<li>CDW + TP (самоучастие €500–1500).</li>
+<li>Винетка за България.</li>
+<li>Неограничен километраж.</li>
+<li>ДДС 20%.</li>
+<li>Зимни гуми (ноември–март).</li>
+</ul>
+
+<h3>Застраховки</h3>
+<ul>
+<li><strong>Гражданска отговорност (Third-party liability):</strong> Задължително покритие.</li>
+<li><strong>CDW (Collision Damage Waiver):</strong> Покритие на щети до размера на самоучастието. Валидно само с полицейски протокол.</li>
+<li><strong>TP (Theft Protection):</strong> Защита при кражба.</li>
+<li><strong>Super CDW / Full Coverage:</strong> Намалява самоучастие до €0 — <strong>€15/ден</strong>.</li>
+</ul>
+
+<h3>Плащане и депозит</h3>
+<p>Плащането се извършва по <strong>банков път</strong>. Депозит от <strong>€200–2000</strong> (блокиране на карта). Гориво: политика „пълен/пълен".</p>
+
+<h3>Анулиране</h3>
+<p>Безплатно анулиране до <strong>72 часа</strong> преди вземане. По-късно — таксува се 1 ден наем. Вижте <a href="#/policies" onclick="setTimeout(()=>{const el=document.getElementById('pol-cancellation');if(el)el.scrollIntoView({behavior:'smooth'})},100)">Политика за анулиране</a>.</p>
+
+<h3>Отговорности на Наемателя</h3>
+<ul>
+<li>Без управление под влияние на алкохол/наркотици.</li>
+<li>Спазване на Правилника за движение по пътищата.</li>
+<li><strong>Забранено:</strong> офроуд шофиране, търговски транспорт.</li>
+</ul>
+
+<h3>Отказ от услуга</h3>
+<p>При нарушаване на условията — наемателят поема отговорност за всички такси, глоби и щети.</p>
+
+<h3>Законодателство</h3>
+<p>Приложимо е <strong>българското право</strong>. Компетентен съд — гр. София.</p>` },
+
+    { slug: 'cookies', title: 'Политика за бисквитки', icon: 'fa-cookie-bite',
+      defaultContent: `<p class="pol-meta">Дата на последна актуализация: 08.02.2026</p>
+<p>Използваме бисквитки за подобряване работата на сайта. Съгласие се дава чрез банера за бисквитки.</p>
+
+<h3>Какво са бисквитки</h3>
+<p>Бисквитките са малки текстови файлове, които се записват на вашето устройство. Те служат за управление на сесии, запомняне на предпочитания и анализ на трафика.</p>
+
+<h3>Типове бисквитки</h3>
+<table class="pol-table">
+<thead><tr><th>Тип</th><th>Цел</th><th>Примери</th><th>Срок</th></tr></thead>
+<tbody>
+<tr><td><strong>Необходими</strong></td><td>Основни функции на сайта</td><td>session_id</td><td>Сесия</td></tr>
+<tr><td><strong>Аналитика</strong></td><td>Статистика на посещенията</td><td>Google Analytics (_ga)</td><td>2 години</td></tr>
+<tr><td><strong>Маркетинг</strong></td><td>Персонализирани реклами</td><td>Facebook Pixel</td><td>90 дни</td></tr>
+</tbody>
+</table>
+
+<h3>Трети страни</h3>
+<p>Бисквитки от трети страни могат да бъдат поставяни от: Google, Facebook.</p>
+
+<h3>Вашите права</h3>
+<p>Можете да оттеглите съгласието си по всяко време чрез банера за бисквитки или настройките на браузъра. Поддържаме GPC (Global Privacy Control).</p>
+<p>За повече информация, вижте нашата <a href="#/policies" onclick="setTimeout(()=>{const el=document.getElementById('pol-privacy');if(el)el.scrollIntoView({behavior:'smooth'})},100)">Политика за поверителност</a>.</p>` },
+
+    { slug: 'cancellation', title: 'Политика за анулиране и възстановяване', icon: 'fa-rotate-left',
+      defaultContent: `<p class="pol-meta">Дата на последна актуализация: 08.02.2026</p>
+<p>Резервации могат да бъдат анулирани онлайн или чрез връзка с нашия екип.</p>
+
+<h3>Условия за анулиране</h3>
+<table class="pol-table">
+<thead><tr><th>Период преди вземане</th><th>Условие</th></tr></thead>
+<tbody>
+<tr><td><strong>Повече от 72 часа</strong></td><td>100% възстановяване на сумата</td></tr>
+<tr><td><strong>24–72 часа</strong></td><td>50% такса от стойността на наема</td></tr>
+<tr><td><strong>По-малко от 24 часа</strong></td><td>Такса в размер на 1 ден наем, без възстановяване на остатъка</td></tr>
+<tr><td><strong>Неявяване (No-show)</strong></td><td>Пълната сума на резервацията се удържа</td></tr>
+</tbody>
+</table>
+
+<h3>Процедура за възстановяване</h3>
+<p>Възстановяването на суми се извършва в срок от <strong>5–10 работни дни</strong> по банков път по сметката, от която е направено плащането.</p>
+
+<h3>Изключения</h3>
+<p>При доказан <strong>форсмажор</strong> (природно бедствие, пандемия, внезапно заболяване с медицинско удостоверение) — сумата се възстановява в пълен размер, независимо от периода на анулиране.</p>
+
+<h3>Свържете се с нас</h3>
+<p>За анулиране или въпроси: <a href="mailto:{{company_email}}">{{company_email}}</a> | <a href="tel:{{company_phone_clean}}">{{company_phone}}</a></p>` },
+
+    { slug: 'insurance', title: 'Застраховки', icon: 'fa-car-burst',
+      defaultContent: `<p class="pol-meta">Дата на последна актуализация: 08.02.2026</p>
+
+<h3>Гражданска отговорност (Third-party liability)</h3>
+<p><strong>Задължително покритие</strong>, включено в цената на всеки наем. Покрива щети, причинени на трети лица — имуществени и неимуществени.</p>
+
+<h3>CDW (Collision Damage Waiver)</h3>
+<p>Ограничава отговорността на наемателя при щети по автомобила до размера на <strong>самоучастието (€500–1500)</strong>. Валидно е само при наличие на <strong>полицейски протокол</strong>.</p>
+<p><strong>Изключения:</strong> небрежност, управление под влияние на алкохол/наркотици, нарушаване на условията за ползване.</p>
+
+<h3>TP (Theft Protection)</h3>
+<p>Защита при кражба на автомобила. Покритие до размера на самоучастието (<strong>€500–1500</strong>). Изисква полицейски протокол.</p>
+
+<h3>Super CDW / Full Coverage</h3>
+<p>Допълнителна опция на цена от <strong>€15/ден</strong>. Намалява самоучастието до <strong>€0</strong> — пълно покритие за спокойствие по пътищата.</p>
+
+<h3>Допълнителни застраховки</h3>
+<ul>
+<li><strong>PAI (Personal Accident Insurance):</strong> Застраховка на водача и пътниците — покрива медицински разходи при произшествие.</li>
+<li><strong>PEC (Personal Effects Coverage):</strong> Застраховка на личен багаж и вещи в автомобила.</li>
+</ul>
+
+<h3>Важно</h3>
+<p>Всички застрахователни покрития са валидни само на територията на <strong>България</strong>, освен ако не е договорено друго. За пътуване в чужбина се свържете с нашия екип за допълнителна „Зелена карта".</p>
+<p>За въпроси: <a href="mailto:{{company_email}}">{{company_email}}</a> | <a href="tel:{{company_phone_clean}}">{{company_phone}}</a></p>` }
+  ];
+  }
+
+  async function mountPoliciesPage() {
+    const POLICY_SECTIONS = getPolicySections();
+    app.className = 'landing-wrap';
+    // Load policies from API
+    let policies = [];
+    try {
+      policies = await fetch(`${API_BASE}/api/policies`).then(r => r.json());
+    } catch (e) { /* fallback to defaults */ }
+    const policyMap = {};
+    (policies || []).forEach(p => { policyMap[p.slug] = p; });
+
+    // Auto-seed missing / empty policies into DB so admin can edit them later
+    for (const sec of POLICY_SECTIONS) {
+      const existing = policyMap[sec.slug];
+      if (!existing || !existing.content || existing.content.trim() === '' || existing.content === '<p><br></p>') {
+        try {
+          const res = await fetch(`${API_BASE}/api/policies/${sec.slug}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: sec.title, content: sec.defaultContent })
+          });
+          if (res.ok) {
+            const saved = await res.json();
+            policyMap[sec.slug] = saved;
+          }
+        } catch (e) { /* ignore */ }
+      }
+    }
+
+    const sectionsHTML = POLICY_SECTIONS.map((sec, idx) => {
+      const saved = policyMap[sec.slug];
+      const content = (saved && saved.content) ? saved.content : sec.defaultContent;
+      const title = (saved && saved.title) ? saved.title : sec.title;
+      return `
+        <div class="pol-section" id="pol-${sec.slug}">
+          <div class="pol-section-header">
+            <div class="pol-section-icon"><i class="fa-solid ${sec.icon}"></i></div>
+            <h2 class="pol-section-title">${title}</h2>
+          </div>
+          <div class="pol-section-body">${content}</div>
+        </div>
+      `;
+    }).join('');
+
+    const tocHTML = POLICY_SECTIONS.map(sec => {
+      const saved = policyMap[sec.slug];
+      const title = (saved && saved.title) ? saved.title : sec.title;
+      return `<a href="#pol-${sec.slug}" class="pol-toc-link" data-pol-anchor="pol-${sec.slug}"><i class="fa-solid ${sec.icon}"></i> ${title}</a>`;
+    }).join('');
+
+    app.innerHTML = `
+      ${siteHeaderHTML('policies')}
+      <section class="au-hero">
+        <h1 class="au-hero-title">Условия и Политики</h1>
+        <p class="au-hero-breadcrumb"><a href="#/">Начало</a> / Условия и Политики</p>
+      </section>
+
+      <section class="pol-content-section">
+        <div class="pol-content-inner">
+          <aside class="pol-toc">
+            <h3 class="pol-toc-title">Съдържание</h3>
+            ${tocHTML}
+          </aside>
+          <div class="pol-main">
+            ${sectionsHTML}
+          </div>
+        </div>
+      </section>
+
+      <section class="au-cta-section">
+        <div class="au-cta-inner">
+          <div class="au-cta-text">
+            <h2>Имате въпроси?</h2>
+            <p class="au-cta-phone">${companyInfo.phone || '+359 888 810 469'}</p>
+            <p class="au-cta-desc">Свържете се с нас по телефон или имейл. Нашият екип ще ви отговори в рамките на работния ден.</p>
+            <a href="#footer" class="au-cta-btn">Свържете се с нас</a>
+          </div>
+        </div>
+      </section>
+
+      ${siteFooterHTML()}
+    `;
+    bindHamburger();
+
+    // TOC smooth scroll
+    $$('[data-pol-anchor]').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const target = document.getElementById(link.getAttribute('data-pol-anchor'));
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // highlight active
+        $$('[data-pol-anchor]').forEach(l => l.classList.remove('active'));
+        link.classList.add('active');
+      });
+    });
+
+    // Highlight first TOC item
+    const firstToc = $('[data-pol-anchor]');
+    if (firstToc) firstToc.classList.add('active');
+
+    // Scroll spy for TOC
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const id = entry.target.id;
+          $$('[data-pol-anchor]').forEach(l => l.classList.remove('active'));
+          const activeLink = $(`[data-pol-anchor="${id}"]`);
+          if (activeLink) activeLink.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-100px 0px -60% 0px' });
+    $$('.pol-section').forEach(sec => observer.observe(sec));
+  }
+
+  /* ===== ADMIN POLICIES ===== */
+  function renderAdminPolicies() {
+    const POLICY_SECTIONS = getPolicySections();
+    mountAdminIfNeeded(true);
+    const root = $('#adminRoot');
+    root.innerHTML = adminNav('policies') + `
+      <div class="panel" style="padding:16px; margin-bottom:12px;">
+        <div class="header" style="padding:0 0 12px 0; border:0;">
+          <h2>Управление на политики и условия</h2>
+        </div>
+        <p style="color:#6B7280; font-size:13px; margin-bottom:16px;">Редактирайте съдържанието на всяка секция. Промените ще се отразят на публичната страница „Условия и Политики".</p>
+        <div class="pol-admin-tabs" id="polAdminTabs">
+          ${POLICY_SECTIONS.map((sec, idx) => `
+            <button class="pol-admin-tab ${idx === 0 ? 'active' : ''}" data-pol-tab="${sec.slug}">
+              <i class="fa-solid ${sec.icon}"></i> ${sec.title}
+            </button>
+          `).join('')}
+        </div>
+        <div id="polEditorWrap" style="margin-top:16px;">
+          <div style="margin-bottom:12px;">
+            <label style="font-weight:600; font-size:13px; color:#374151;">Заглавие на секцията</label>
+            <input id="polTitle" class="input" style="margin-top:4px;">
+          </div>
+          <!-- Editor mode tabs -->
+          <div class="pol-editor-mode-tabs">
+            <button class="pol-editor-mode-tab active" data-editor-mode="visual"><i class="fa-solid fa-eye"></i> Визуален</button>
+            <button class="pol-editor-mode-tab" data-editor-mode="source"><i class="fa-solid fa-code"></i> HTML код</button>
+            <button class="pol-editor-mode-tab" data-editor-mode="preview"><i class="fa-solid fa-desktop"></i> Преглед</button>
+          </div>
+          <!-- Toolbar for visual mode -->
+          <div id="polEditorToolbar" class="pol-editor-toolbar">
+            <button type="button" data-cmd="bold" title="Удебелен"><i class="fa-solid fa-bold"></i></button>
+            <button type="button" data-cmd="italic" title="Курсив"><i class="fa-solid fa-italic"></i></button>
+            <button type="button" data-cmd="underline" title="Подчертан"><i class="fa-solid fa-underline"></i></button>
+            <button type="button" data-cmd="strikeThrough" title="Зачертан"><i class="fa-solid fa-strikethrough"></i></button>
+            <span class="pol-toolbar-sep"></span>
+            <button type="button" data-cmd="formatBlock" data-val="H2" title="Заглавие H2"><i class="fa-solid fa-heading"></i>2</button>
+            <button type="button" data-cmd="formatBlock" data-val="H3" title="Заглавие H3"><i class="fa-solid fa-heading"></i>3</button>
+            <button type="button" data-cmd="formatBlock" data-val="P" title="Параграф"><i class="fa-solid fa-paragraph"></i></button>
+            <span class="pol-toolbar-sep"></span>
+            <button type="button" data-cmd="insertUnorderedList" title="Списък"><i class="fa-solid fa-list-ul"></i></button>
+            <button type="button" data-cmd="insertOrderedList" title="Номериран списък"><i class="fa-solid fa-list-ol"></i></button>
+            <span class="pol-toolbar-sep"></span>
+            <button type="button" data-cmd="createLink" title="Добави връзка"><i class="fa-solid fa-link"></i></button>
+            <button type="button" data-cmd="unlink" title="Премахни връзка"><i class="fa-solid fa-link-slash"></i></button>
+            <span class="pol-toolbar-sep"></span>
+            <button type="button" data-cmd="insertTable" title="Добави таблица"><i class="fa-solid fa-table"></i></button>
+            <button type="button" data-cmd="removeFormat" title="Изчисти форматиране"><i class="fa-solid fa-eraser"></i></button>
+          </div>
+          <!-- Visual editor (contenteditable) -->
+          <div id="polEditorVisual" class="pol-editor-visual" contenteditable="true"></div>
+          <!-- Source editor (textarea) -->
+          <textarea id="polEditorSource" class="pol-editor-source" style="display:none;"></textarea>
+          <!-- Preview pane -->
+          <div id="polEditorPreview" class="pol-editor-preview" style="display:none;"></div>
+
+          <div style="display:flex; align-items:center; gap:12px; margin-top:16px; flex-wrap:wrap;">
+            <button class="btn-primary" id="polSaveBtn"><i class="fa-solid fa-floppy-disk"></i> Запази промените</button>
+            <button class="btn" id="polDefaultBtn" style="background:#F3F4F6; color:#374151; border:1px solid #D1D5DB; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:13px;" title="Презареди текста по подразбиране за тази секция"><i class="fa-solid fa-rotate-left"></i> Текст по подразбиране</button>
+            <span id="polSaveMsg" style="color:#10B981; font-size:13px; display:none;">✓ Записано успешно</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    let currentSlug = POLICY_SECTIONS[0].slug;
+    let policiesData = {};
+    let editorMode = 'visual'; // 'visual' | 'source' | 'preview'
+
+    const visualEl = $('#polEditorVisual');
+    const sourceEl = $('#polEditorSource');
+    const previewEl = $('#polEditorPreview');
+    const toolbarEl = $('#polEditorToolbar');
+
+    // --- Toolbar commands ---
+    toolbarEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-cmd]');
+      if (!btn) return;
+      e.preventDefault();
+      const cmd = btn.getAttribute('data-cmd');
+      const val = btn.getAttribute('data-val') || null;
+      visualEl.focus();
+      if (cmd === 'createLink') {
+        const url = prompt('URL на връзката:', 'https://');
+        if (url) document.execCommand('createLink', false, url);
+      } else if (cmd === 'insertTable') {
+        const rows = parseInt(prompt('Брой редове:', '3')) || 3;
+        const cols = parseInt(prompt('Брой колони:', '3')) || 3;
+        let html = '<table class="pol-table"><thead><tr>';
+        for (let c = 0; c < cols; c++) html += '<th>Заглавие</th>';
+        html += '</tr></thead><tbody>';
+        for (let r = 0; r < rows - 1; r++) {
+          html += '<tr>';
+          for (let c = 0; c < cols; c++) html += '<td>—</td>';
+          html += '</tr>';
+        }
+        html += '</tbody></table>';
+        document.execCommand('insertHTML', false, html);
+      } else {
+        document.execCommand(cmd, false, val);
+      }
+    });
+
+    // --- Editor mode switching ---
+    function setEditorMode(mode) {
+      const prevMode = editorMode;
+      // Sync content between modes before switching
+      if (prevMode === 'visual' && mode !== 'visual') {
+        sourceEl.value = visualEl.innerHTML;
+      } else if (prevMode === 'source' && mode !== 'source') {
+        visualEl.innerHTML = sourceEl.value;
+      }
+      editorMode = mode;
+      visualEl.style.display = mode === 'visual' ? 'block' : 'none';
+      sourceEl.style.display = mode === 'source' ? 'block' : 'none';
+      previewEl.style.display = mode === 'preview' ? 'block' : 'none';
+      toolbarEl.style.display = mode === 'visual' ? 'flex' : 'none';
+      if (mode === 'preview') {
+        // Read from whichever mode we came from
+        const html = prevMode === 'source' ? sourceEl.value : visualEl.innerHTML;
+        previewEl.innerHTML = html;
+      }
+      $$('[data-editor-mode]').forEach(t => t.classList.toggle('active', t.getAttribute('data-editor-mode') === mode));
+    }
+
+    $$('[data-editor-mode]').forEach(tab => {
+      tab.addEventListener('click', () => setEditorMode(tab.getAttribute('data-editor-mode')));
+    });
+
+    // --- Get current editor content ---
+    function getEditorContent() {
+      if (editorMode === 'source') return sourceEl.value;
+      return visualEl.innerHTML;
+    }
+
+    // --- Set editor content ---
+    function setEditorContent(html) {
+      visualEl.innerHTML = html;
+      sourceEl.value = html;
+    }
+
+    // --- Load all policies – auto-seed missing ones ---
+    async function loadPolicies() {
+      try {
+        const list = await fetch(`${API_BASE}/api/policies`).then(r => r.json());
+        (list || []).forEach(p => { policiesData[p.slug] = p; });
+      } catch (e) { /* use defaults */ }
+
+      // Auto-seed: policies missing from DB or with empty content
+      for (const sec of POLICY_SECTIONS) {
+        const existing = policiesData[sec.slug];
+        if (!existing || !existing.content || existing.content.trim() === '' || existing.content === '<p><br></p>') {
+          try {
+            const res = await fetch(`${API_BASE}/api/policies/${sec.slug}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ title: sec.title, content: sec.defaultContent })
+            });
+            if (res.ok) {
+              const saved = await res.json();
+              policiesData[sec.slug] = saved;
+            }
+          } catch (e) { /* ignore seed errors */ }
+        }
+      }
+    }
+
+    // --- Show a policy in the editor ---
+    function showPolicy(slug) {
+      currentSlug = slug;
+      const sec = POLICY_SECTIONS.find(s => s.slug === slug);
+      const saved = policiesData[slug];
+      const titleInput = $('#polTitle');
+      titleInput.value = (saved && saved.title) ? saved.title : (sec ? sec.title : '');
+      const content = (saved && saved.content && saved.content.trim() !== '') ? saved.content : (sec ? sec.defaultContent : '');
+      setEditorContent(content);
+      if (editorMode === 'preview') {
+        previewEl.innerHTML = content;
+      }
+      // Update active tab
+      $$('[data-pol-tab]').forEach(t => t.classList.toggle('active', t.getAttribute('data-pol-tab') === slug));
+      const msg = $('#polSaveMsg');
+      if (msg) msg.style.display = 'none';
+    }
+
+    // --- Tab clicks ---
+    $$('[data-pol-tab]').forEach(tab => {
+      tab.addEventListener('click', () => showPolicy(tab.getAttribute('data-pol-tab')));
+    });
+
+    // --- Save ---
+    const saveBtn = $('#polSaveBtn');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        const title = $('#polTitle').value.trim();
+        const content = getEditorContent();
+        if (!title) { alert('Моля, въведете заглавие.'); return; }
+        try {
+          saveBtn.disabled = true;
+          saveBtn.textContent = 'Запазване...';
+          const res = await fetch(`${API_BASE}/api/policies/${currentSlug}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, content })
+          });
+          const saved = await res.json();
+          policiesData[currentSlug] = saved;
+          const msg = $('#polSaveMsg');
+          if (msg) { msg.style.display = 'inline'; setTimeout(() => msg.style.display = 'none', 3000); }
+        } catch (e) {
+          alert('Грешка при запазване');
+        } finally {
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Запази промените';
+        }
+      });
+    }
+
+    // --- Reset to default ---
+    const defaultBtn = $('#polDefaultBtn');
+    if (defaultBtn) {
+      defaultBtn.addEventListener('click', () => {
+        const sec = POLICY_SECTIONS.find(s => s.slug === currentSlug);
+        if (!sec) return;
+        if (!confirm(`Сигурни ли сте, че искате да презаредите текста по подразбиране за "${sec.title}"?\n\nВсички ваши промени ще бъдат загубени.`)) return;
+        $('#polTitle').value = sec.title;
+        setEditorContent(sec.defaultContent);
+      });
+    }
+
+    // --- Init ---
+    loadPolicies().then(() => showPolicy(currentSlug));
+  }
+
   function renderRoute() {
     const hash = location.hash || '#/';
+    // "Контакти" — scroll to footer on any page
+    if (hash === '#footer') {
+      const ft = document.getElementById('footer');
+      if (ft) { ft.scrollIntoView({ behavior: 'smooth' }); return; }
+    }
+    // Scroll to top on every page navigation
+    window.scrollTo(0, 0);
     if (hash.startsWith('#/admin')) {
       const path = hash.split('?')[0];
       if (path === '#/admin' || path === '#/admin/') return renderAdminDashboard();
@@ -3562,9 +4942,13 @@
       if (path === '#/admin/settings') return renderAdminSettings();
       if (path === '#/admin/reservations') return renderAdminReservations();
       if (path === '#/admin/invoices') return renderAdminInvoices();
+      if (path === '#/admin/policies') return renderAdminPolicies();
       return renderAdminDashboard();
     }
     if (hash.startsWith('#/reserve')) return renderWizard();
+    if (hash.startsWith('#/vehicles')) { mountVehiclesPage(); return; }
+    if (hash.startsWith('#/about-us')) { mountAboutUsPage(); return; }
+    if (hash.startsWith('#/policies')) { mountPoliciesPage(); return; }
     // default home
     mountSearchLayout();
     renderFilters();

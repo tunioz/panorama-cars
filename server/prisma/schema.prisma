@@ -172,4 +172,13 @@ model CompanyInfo {
   updatedAt DateTime @updatedAt
 }
 
+model Policy {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  title     String
+  content   String?  // HTML content from WYSIWYG editor
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 

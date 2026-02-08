@@ -777,6 +777,29 @@ app.put('/api/company', async (req, res) => {
   res.json(saved);
 });
 
+// Policies
+app.get('/api/policies', async (req, res) => {
+  const list = await prisma.policy.findMany({ orderBy: { slug: 'asc' } });
+  res.json(list);
+});
+app.get('/api/policies/:slug', async (req, res) => {
+  const policy = await prisma.policy.findUnique({ where: { slug: req.params.slug } });
+  res.json(policy || { slug: req.params.slug, title: '', content: '' });
+});
+app.put('/api/policies/:slug', async (req, res) => {
+  const { title, content } = req.body || {};
+  const slug = req.params.slug;
+  const exists = await prisma.policy.findUnique({ where: { slug } });
+  let saved;
+  if (exists) {
+    saved = await prisma.policy.update({ where: { slug }, data: { title: title || exists.title, content: content ?? exists.content } });
+  } else {
+    saved = await prisma.policy.create({ data: { slug, title: title || slug, content: content || '' } });
+  }
+  await logAction(null, 'policy.update', { slug });
+  res.json(saved);
+});
+
 app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${PORT}`);
 });
