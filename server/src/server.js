@@ -312,7 +312,11 @@ function safeParse(str) {
   try { return JSON.parse(str || '[]'); } catch { return []; }
 }
 async function makeThumb(srcPath, destPath) {
-  await sharp(srcPath).resize(320, 200, { fit: 'cover' }).jpeg({ quality: 80 }).toFile(destPath);
+  await sharp(srcPath)
+    .flatten({ background: '#ffffff' })   // transparent → white
+    .resize(320, 200, { fit: 'cover' })
+    .jpeg({ quality: 80 })
+    .toFile(destPath);
 }
 app.post('/api/cars/:id/images', upload.array('images', 10), async (req, res) => {
   const carId = req.params.id;
