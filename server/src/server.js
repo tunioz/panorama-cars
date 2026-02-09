@@ -828,8 +828,12 @@ const FRONTEND_DIR = path.resolve(__dirname, '..', '..');  // repo root
 // Serve frontend static files (index.html, app.js, styles.css, design.json, etc.)
 app.use(express.static(FRONTEND_DIR, { index: false }));
 
-// SPA catch-all: any route that doesn't match API/uploads → serve index.html
+// SPA catch-all: only serve index.html for navigation requests (not file requests)
 app.get('*', (req, res) => {
+  // If it looks like a file request (has extension), return 404 instead of index.html
+  if (/\.\w+$/.test(req.path)) {
+    return res.status(404).send('Not found');
+  }
   res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
 });
 
