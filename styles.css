@@ -43,9 +43,10 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; overflow-x: hidden; }
+html { overflow-x: clip; }
 body {
-  margin: 0;
+  margin: 0; min-height: 100dvh;
+  overflow-x: clip;
   font-family: var(--font-family);
   font-size: var(--font-body);
   font-weight: var(--weight-regular);
@@ -53,7 +54,6 @@ body {
   color: var(--color-text);
   -webkit-font-smoothing: antialiased;
 }
-html { scroll-behavior: smooth; }
 input, select, textarea { font-size: 16px; }
 h1, .h1 { font-size: var(--font-h1); font-weight: var(--weight-bold); margin: 0; }
 h2, .h2 { font-size: var(--font-h2); font-weight: var(--weight-semibold); margin: 0; }
@@ -657,7 +657,7 @@ button[disabled] { opacity: .6; cursor: not-allowed; }
 /* ===== LANDING PAGE SECTIONS ===== */
 
 /* Landing wrapper (no grid, full-width sections) */
-.landing-wrap { display:block; width:100%; overflow-x: hidden; }
+.landing-wrap { display:block; width:100%; }
 .landing-wrap .topnav { border-radius:0; border-left:0; border-right:0; }
 
 /* Sticky header – new style */
@@ -2188,7 +2188,7 @@ select.hb-input { padding-right:34px; cursor:pointer; }
   }
   .filters { padding: 8px; }
   .card, .cc { max-width: 100%; }
-  .admin-shell { padding: 8px !important; overflow-x: hidden; }
+  .admin-shell { padding: 8px !important; overflow-x: clip; }
   .panel { max-width: 100%; overflow-x: auto; }
   .cc-body { padding: 16px; }
   .cc-name { font-size: 18px; }
