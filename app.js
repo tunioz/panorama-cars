@@ -35,6 +35,165 @@
   const uid = () => Math.random().toString(36).slice(2, 9);
   const carParamsCache = new Map();
 
+  /* ===== Custom Date-Time Picker (cross-browser) ===== */
+  const BG_MONTHS = ['Януари','Февруари','Март','Април','Май','Юни','Юли','Август','Септември','Октомври','Ноември','Декември'];
+  const BG_DAYS  = ['Пн','Вт','Ср','Чт','Пт','Сб','Нд'];
+
+  function formatDtpDisplay(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return `${String(d.getDate()).padStart(2,'0')}.${String(d.getMonth()+1).padStart(2,'0')}.${d.getFullYear()}, ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  }
+
+  function initDateTimePicker(input) {
+    if (input._dtpInit) return;
+    input._dtpInit = true;
+
+    const minuteStep = Math.max(1, Math.floor((parseInt(input.getAttribute('step')) || 1800) / 60));
+    const origValue = input.value || '';
+
+    // State
+    let now = new Date();
+    let selDate  = origValue ? new Date(origValue) : new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), 0);
+    if (isNaN(selDate)) selDate = new Date();
+    let vMonth = selDate.getMonth(), vYear = selDate.getFullYear();
+    let selHour = selDate.getHours(), selMin = selDate.getMinutes();
+    // Round minutes to nearest step
+    selMin = Math.round(selMin / minuteStep) * minuteStep;
+    if (selMin >= 60) selMin = 0;
+
+    // Wrap
+    const wrap = document.createElement('div');
+    wrap.className = 'dtp-wrap';
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+
+    // Change to text
+    input.type = 'text';
+    input.readOnly = true;
+    input.style.cursor = 'pointer';
+    input.classList.add('dtp-input');
+
+    // Intercept .value
+    let _isoVal = origValue;
+    const nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+
+    Object.defineProperty(input, 'value', {
+      get() { return _isoVal; },
+      set(v) {
+        _isoVal = v || '';
+        if (v) {
+          const d = new Date(v);
+          if (!isNaN(d)) {
+            selDate = d; selHour = d.getHours(); selMin = d.getMinutes();
+            vMonth = d.getMonth(); vYear = d.getFullYear();
+          }
+        }
+        nativeSet.call(input, formatDtpDisplay(v));
+      },
+      configurable: true
+    });
+    nativeSet.call(input, formatDtpDisplay(origValue));
+
+    // Dropdown
+    const dd = document.createElement('div');
+    dd.className = 'dtp-dropdown';
+    dd.style.display = 'none';
+    wrap.appendChild(dd);
+
+    function buildISO() {
+      return `${vYear}-${String(vMonth+1).padStart(2,'0')}-${String(selDate.getDate()).padStart(2,'0')}T${String(selHour).padStart(2,'0')}:${String(selMin).padStart(2,'0')}`;
+    }
+
+    function applyVal() {
+      selDate = new Date(vYear, vMonth, selDate.getDate(), selHour, selMin);
+      const iso = buildISO();
+      _isoVal = iso;
+      nativeSet.call(input, formatDtpDisplay(iso));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function render() {
+      const today = new Date();
+      const first = new Date(vYear, vMonth, 1);
+      let startDay = (first.getDay() + 6) % 7; // Mon=0
+      const daysInMonth = new Date(vYear, vMonth + 1, 0).getDate();
+      const selD = selDate.getDate(), selM = selDate.getMonth(), selY = selDate.getFullYear();
+
+      let html = `<div class="dtp-header">
+        <button type="button" class="dtp-nav" data-dir="-1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg></button>
+        <span class="dtp-month-year">${BG_MONTHS[vMonth]} ${vYear}</span>
+        <button type="button" class="dtp-nav" data-dir="1"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg></button>
+      </div>
+      <div class="dtp-weekdays">${BG_DAYS.map(d => `<span>${d}</span>`).join('')}</div>
+      <div class="dtp-days">`;
+
+      for (let i = 0; i < startDay; i++) html += `<span class="dtp-day dtp-empty"></span>`;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const isToday = d === today.getDate() && vMonth === today.getMonth() && vYear === today.getFullYear();
+        const isSel   = d === selD && vMonth === selM && vYear === selY;
+        let cls = 'dtp-day';
+        if (isToday) cls += ' dtp-today';
+        if (isSel)   cls += ' dtp-sel';
+        html += `<span class="${cls}" data-d="${d}">${d}</span>`;
+      }
+
+      html += `</div>
+      <div class="dtp-time-row">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B7280" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        <select class="dtp-sel-h">${Array.from({length:24},(_,i)=>`<option value="${i}"${i===selHour?' selected':''}>${String(i).padStart(2,'0')}</option>`).join('')}</select>
+        <span class="dtp-colon">:</span>
+        <select class="dtp-sel-m">${Array.from({length:Math.ceil(60/minuteStep)},(_,i)=>{const m=i*minuteStep;return `<option value="${m}"${m===selMin?' selected':''}>${String(m).padStart(2,'0')}</option>`;}).join('')}</select>
+      </div>
+      <button type="button" class="dtp-done">Готово</button>`;
+
+      dd.innerHTML = html;
+
+      // Bind
+      dd.querySelectorAll('.dtp-nav').forEach(b => b.onclick = e => {
+        e.preventDefault(); e.stopPropagation();
+        vMonth += parseInt(b.dataset.dir);
+        if (vMonth < 0)  { vMonth = 11; vYear--; }
+        if (vMonth > 11) { vMonth = 0;  vYear++; }
+        render();
+      });
+      dd.querySelectorAll('.dtp-day[data-d]').forEach(c => c.onclick = e => {
+        e.stopPropagation();
+        selDate = new Date(vYear, vMonth, parseInt(c.dataset.d), selHour, selMin);
+        applyVal(); render();
+      });
+      dd.querySelector('.dtp-sel-h').onchange = function() { selHour = parseInt(this.value); applyVal(); };
+      dd.querySelector('.dtp-sel-m').onchange = function() { selMin  = parseInt(this.value); applyVal(); };
+      dd.querySelector('.dtp-done').onclick = e => { e.stopPropagation(); close(); };
+    }
+
+    function open() {
+      // Close other pickers
+      document.querySelectorAll('.dtp-dropdown').forEach(d => { if (d !== dd) d.style.display = 'none'; });
+      render(); dd.style.display = '';
+    }
+    function close() { dd.style.display = 'none'; }
+
+    input.addEventListener('click', e => { e.stopPropagation(); open(); });
+    input.addEventListener('focus', e => { e.stopPropagation(); open(); });
+    dd.addEventListener('click', e => e.stopPropagation());
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+  }
+
+  // Auto-init: watch for new datetime-local inputs
+  const dtpObserver = new MutationObserver(muts => {
+    for (const m of muts) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType !== 1) continue;
+        if (node.matches && node.matches('input[type="datetime-local"]')) initDateTimePicker(node);
+        if (node.querySelectorAll) node.querySelectorAll('input[type="datetime-local"]').forEach(initDateTimePicker);
+      }
+    }
+  });
+  dtpObserver.observe(document.body, { childList: true, subtree: true });
+
   /* ===== Admin Auth ===== */
   // Credentials are hashed (SHA-256 hex) so they're not in plain text in source.
   // Default: user=evgi, pass=evgi
