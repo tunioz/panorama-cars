@@ -389,6 +389,13 @@
     const b = normalize(query);
     return a.includes(b);
   }
+  // Normalize DB enum values for human display (DIESEL → Diesel, AUTOMATIC → Automatic)
+  function displayVal(v) {
+    if (!v || typeof v !== 'string') return v || '';
+    // If it's all uppercase, convert to title case
+    if (v === v.toUpperCase() && v.length > 1) return v.charAt(0) + v.slice(1).toLowerCase();
+    return v;
+  }
   function getParamIcon(name) {
     const n = (name || '').toLowerCase();
     if (n.includes('вид кола')) return '🚗';
@@ -538,23 +545,25 @@
         model: c.model,
         trim: c.trim,
         pricePerDay: c.pricePerDay ?? 0,
-        transmission: c.transmission === 'AUTOMATIC' ? 'Automatic' : 'Manual',
-        fuel: c.fuel ? c.fuel.charAt(0) + c.fuel.slice(1).toLowerCase() : '',
+        transmission: displayVal(c.transmission),
+        fuel: displayVal(c.fuel),
         seats: c.seats || null,
         bodyStyle: c.bodyStyle || '',
         type: c.type || '',
         images: Array.isArray(c.images) ? c.images : [],
         status: c.status === 'SERVICE' ? 'в сервиз' : c.status === 'RESERVED' ? 'резервиран' : 'наличен'
       };
-      // Overlay type & transmission from dynamic params (same as fetchCarsFromApi)
+      // Overlay type, transmission & fuel from dynamic params (same as fetchCarsFromApi)
       try {
         if (!Array.isArray(paramDefs) || !paramDefs.length) paramDefs = await apiFetch('/api/params');
         const typeDef = findCarTypeDef();
         const gearDef = findGearDef();
-        if (typeDef || gearDef) {
+        const fuelDef = findFuelDef();
+        if (typeDef || gearDef || fuelDef) {
           const vals = await apiFetch(`/api/cars/${id}/params`);
           if (typeDef) { const v = (vals || []).find(x => x.id === typeDef.id)?.value; if (v) car.type = v; }
           if (gearDef) { const g = (vals || []).find(x => x.id === gearDef.id)?.value; if (g) car.transmission = g; }
+          if (fuelDef) { const f = (vals || []).find(x => x.id === fuelDef.id)?.value; if (f) car.fuel = f; }
         }
       } catch {}
       return car;
@@ -599,19 +608,19 @@
         id: c.id,
         brand: c.brand, model: c.model, trim: c.trim,
         pricePerDay: c.pricePerDay ?? 0,
-        transmission: c.transmission === 'AUTOMATIC' ? 'Automatic' : 'Manual',
-        fuel: c.fuel ? c.fuel.charAt(0) + c.fuel.slice(1).toLowerCase() : 'Diesel',
-        seats: c.seats || 5,
+        transmission: displayVal(c.transmission),
+        fuel: displayVal(c.fuel),
+        seats: c.seats || null,
         bodyStyle: c.bodyStyle || '',
         rating: typeof c.rating === 'number' ? c.rating : 4.6,
         distanceKm: typeof c.distanceKm === 'number' ? c.distanceKm : 0.8,
         etaMin: typeof c.etaMin === 'number' ? c.etaMin : 3,
-        type: c.type || 'Лека кола',
+        type: c.type || '',
         images: Array.isArray(c.images) ? c.images : [],
         status: c.status === 'SERVICE' ? 'в сервиз' : c.status === 'RESERVED' ? 'резервиран' : 'наличен',
         favorite: false
       }));
-      // Overlay values from dynamic parameters (car type, transmission)
+      // Overlay values from dynamic parameters (car type, transmission, fuel)
       // Ensure paramDefs are loaded
       try {
         if (!Array.isArray(paramDefs) || !paramDefs.length) {
@@ -619,7 +628,8 @@
         }
         const typeDef = findCarTypeDef();
         const gearDef = findGearDef();
-        if (typeDef || gearDef) {
+        const fuelDef = findFuelDef();
+        if (typeDef || gearDef || fuelDef) {
           const fetchWithRetry = async (url, retries = 2) => {
             for (let i = 0; i <= retries; i++) {
               try { return await apiFetch(url); } catch (e) { if (i === retries) throw e; }
@@ -635,6 +645,10 @@
               if (gearDef) {
                 const g = (vals || []).find(x => x.id === gearDef.id)?.value;
                 if (g) car.transmission = g;
+              }
+              if (fuelDef) {
+                const f = (vals || []).find(x => x.id === fuelDef.id)?.value;
+                if (f) car.fuel = f;
               }
             } catch (e) { console.warn(`[overlay] params for car ${car.id} failed:`, e); }
             return car;
@@ -652,10 +666,7 @@
   let selected = filtered[0];
   let reservations = [];
   let showMoreFilters = false;
-  const params = storage.get('cr_params', {
-    'Тип кола': { type: 'enum', options: ['Лека кола', 'Джип', 'Товарен бус'] },
-    'Конски сили': { type: 'number', unit: 'к.с.' }
-  });
+  const params = storage.get('cr_params', {});
   storage.set('cr_params', params);
   storage.set('cr_company', storage.get('cr_company', {
     name: 'CarRent BG OOD',
@@ -675,13 +686,23 @@
   let paramDefs = [];
   // Flexible lookup: finds the "car type" ENUM param regardless of name ("Вид кола", "Тип кола", etc.)
   function findCarTypeDef() {
-    return (paramDefs || []).find(p => p.type === 'ENUM' && /(?:вид|тип)\b.*кола|кола.*(?:вид|тип)/i.test(p.name));
+    return (paramDefs || []).find(p => p.type === 'ENUM' && isCarTypeParam(p.name));
   }
   function findGearDef() {
-    return (paramDefs || []).find(p => p.type === 'ENUM' && /скоростна\s*кутия|предавк/i.test(p.name));
+    return (paramDefs || []).find(p => p.type === 'ENUM' && isGearParam(p.name));
   }
-  function isCarTypeParam(name) { return /(?:вид|тип)\b.*кола|кола.*(?:вид|тип)/i.test(name); }
-  function isGearParam(name) { return /скоростна\s*кутия|предавк/i.test(name); }
+  function isCarTypeParam(name) {
+    return /(?:вид|тип)\b.*(?:кола|авто|мпс|возило)|(?:кола|авто).*(?:вид|тип)|категория\s*(?:кола|авто)|клас\s*(?:кола|авто)/i.test(name);
+  }
+  function isGearParam(name) {
+    return /скоростна\s*кутия|предавк|трансмиси|скорости/i.test(name);
+  }
+  function isFuelParam(name) {
+    return /гориво|fuel|бензин|дизел|захранване/i.test(name);
+  }
+  function findFuelDef() {
+    return (paramDefs || []).find(p => p.type === 'ENUM' && isFuelParam(p.name));
+  }
   async function loadReservations() {
     try { reservations = await apiFetch('/api/reservations'); }
     catch { reservations = storage.get('cr_reservations', []); }
@@ -976,15 +997,15 @@
   async function renderFilters() {
     const root = $('#filters');
     const s = design?.components?.filter_panel;
-    // Resolve dynamic options from admin-defined params
+    // Resolve dynamic options from admin-defined params (fallback: derive from actual car data)
     const typeDef = findCarTypeDef();
-    const typeOptions = typeDef?.options && Array.isArray(typeDef.options) && typeDef.options.length
+    const typeOptions = typeDef?.options?.length
       ? ['Всички', ...typeDef.options]
-      : ['Всички', 'Лека кола', 'Джип', 'Товарен бус'];
+      : ['Всички', ...new Set(cars.map(c => c.type).filter(Boolean))];
     const gearDef = findGearDef();
-    const gearOptions = gearDef?.options && Array.isArray(gearDef.options) && gearDef.options.length
+    const gearOptions = gearDef?.options?.length
       ? ['Без значение', ...gearDef.options]
-      : ['Без значение', 'Автоматик', 'Ръчна'];
+      : ['Без значение', ...new Set(cars.map(c => c.transmission).filter(Boolean))];
     // Load locations for datalist suggestions
     let locations = [];
     try { locations = await apiFetch('/api/locations'); } catch { locations = []; }
@@ -1107,6 +1128,21 @@
     if (mode === 'Newest') filtered.sort((a,b) => b.year - a.year);
   }
   // Shared car spec SVG icons — used by both homepage and vehicles page
+  // Shared icon helper: maps any param name → SVG/FA icon for car cards
+  const specCardIcon = (name) => {
+    const n = (name || '').toLowerCase();
+    if (isGearParam(name) || n.includes('скоростна') || n.includes('gear') || n.includes('кутия') || n.includes('transmission')) return gearIcon();
+    if (n.includes('гориво') || n.includes('fuel') || n.includes('бензин') || n.includes('дизел')) return fuelIcon();
+    if (n.includes('седалки') || n.includes('места') || n.includes('seat') || n.includes('пътник')) return seatIcon();
+    if (n.includes('конски') || n.includes('мощност') || n.includes('horse') || n.includes('power') || n.includes('к.с')) return powerIcon();
+    if (n.includes('врати') || n.includes('door')) return doorsIcon();
+    if (n.includes('багаж') || n.includes('luggage') || n.includes('куфар')) return luggageIcon();
+    if (n.includes('климат') || n.includes('air') || n.includes('клима')) return acIcon();
+    if (isCarTypeParam(name) || n.includes('тип') || n.includes('вид') || n.includes('категория')) return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6"><path d="M7 17m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0M17 17m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0M5 17H3v-6l2-5h9l4 5h1a2 2 0 0 1 2 2v4h-2m-4 0H9"></path></svg>`;
+    if (n.includes('цвят') || n.includes('color')) return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><circle cx="12" cy="8" r="1" fill="#9CA3AF"></circle><circle cx="8" cy="14" r="1" fill="#9CA3AF"></circle><circle cx="16" cy="14" r="1" fill="#9CA3AF"></circle></svg>`;
+    if (n.includes('година') || n.includes('year') || n.includes('произв')) return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>`;
+    return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>`;
+  };
   const gearIcon = () => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.09a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
   const fuelIcon = () => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h1a2 2 0 0 1 2 2v11.5a2.5 2.5 0 1 1-5 0V4a1 1 0 0 1 1-1Z"></path><path d="M6 3h8v18H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"></path><path d="M6 14h8"></path><path d="M18 7h1.5a1.5 1.5 0 0 1 0 3H18"></path><path d="M8 7h2"></path></svg>`;
   const acIcon = () => `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 0 20"></path><path d="m4.93 4.93 14.14 14.14"></path><path d="m4.93 19.07 14.14-14.14"></path><path d="m3 12 18 0"></path></svg>`;
@@ -1199,30 +1235,21 @@
       const renderSpecs = (params=[]) => {
         const el = document.getElementById(`specs-${c.id}`);
         if (!el) return;
-        const norm = (params || []).map(p => ({
-          name: p.name || '',
-          lower: (p.name || '').toLowerCase(),
-          value: p.value ?? p.valueText ?? p.valueEnum ?? p.valueNum ?? ''
+        // Show up to 3 params that have actual values
+        const items = (params || [])
+          .map(p => ({ name: p.name || '', value: p.value ?? p.valueText ?? p.valueEnum ?? p.valueNum ?? '' }))
+          .filter(p => p.value !== '' && p.value !== null && p.value !== undefined);
+        const specs = items.slice(0, 3).map(p => ({
+          icon: specCardIcon(p.name),
+          text: p.value
         }));
-        const valOf = (names, fallback, fuzzy=false) => {
-          const list = Array.isArray(names) ? names : [names];
-          let found = norm.find(p => list.includes(p.name));
-          if (!found && fuzzy) {
-            const needle = list.map(s => s.toLowerCase());
-            found = norm.find(p => needle.some(n => p.lower.includes(n)));
-          }
-          const val = found?.value;
-          if (val === undefined || val === null || val === '') return fallback;
-          return val;
-        };
-        const trans = valOf(['Скоростна кутия'], c.transmission || 'Automatic', true);
-        const fuel = valOf(['Гориво','Тип гориво'], c.fuel || 'Fuel', true);
-        const specs = [
-          { icon: gearIcon(), text: trans },
-          { icon: fuelIcon(), text: fuel },
-          { icon: acIcon(), text: 'Air Conditioner' }
-        ];
-        el.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${s.text}</span></div>`).join('');
+        // If no params, try fallback from car fields
+        if (!specs.length) {
+          if (c.transmission) specs.push({ icon: gearIcon(), text: c.transmission });
+          if (c.fuel) specs.push({ icon: fuelIcon(), text: c.fuel });
+          if (c.seats) specs.push({ icon: seatIcon(), text: c.seats + ' места' });
+        }
+        el.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${escHtml(String(s.text))}</span></div>`).join('');
       };
       const availability = (() => {
         const selFrom = filterState.from;
@@ -1426,9 +1453,14 @@
             return '<i class="fa-solid fa-id-card"></i>';
           return '<i class="fa-solid fa-circle-info"></i>';
         };
-        /* Split params: highlight (top) vs rest (bottom) */
-        const highlightKeys = ['вид кола', 'гориво', 'скоростна кутия', 'багаж'];
-        const isHighlight = (name) => highlightKeys.some(k => (name || '').toLowerCase().includes(k));
+        /* Split params: highlight (top) vs rest (bottom) — flexible matching */
+        const isHighlight = (name) => {
+          const n = (name || '').toLowerCase();
+          return isCarTypeParam(name) || isGearParam(name)
+            || n.includes('гориво') || n.includes('fuel')
+            || n.includes('багаж') || n.includes('luggage')
+            || n.includes('седалк') || n.includes('места') || n.includes('seat');
+        };
         const allParams = params || [];
         const topParams = allParams.filter(p => isHighlight(p.name) && p?.value);
         const restParams = allParams.filter(p => !isHighlight(p.name));
@@ -2793,7 +2825,7 @@
     }
     function editCar(id) {
       const existing = cars.find(c => c.id === id);
-      const car = existing || { id: uid(), brand:'', model:'', trim:'', pricePerHour:25, type:'Лека кола', status:'наличен', images: [] };
+      const car = existing || { id: uid(), brand:'', model:'', trim:'', pricePerDay:0, type:'', status:'наличен', images: [] };
       const isNew = !existing;
       async function loadCarFromApi() {
         // Винаги зареждаме свежи данни от API (списъкът може да няма images и други полета)
@@ -2972,11 +3004,21 @@
           btn.disabled = true; const prevText = btn.textContent; btn.textContent = 'Запис...';
           try {
             if (!$('#cBrand').value.trim() || !$('#cModel').value.trim()) throw new Error('Моля, попълнете Марка и Модел');
-            // Sync car.type from car-type param before saving basics
+            // Sync car.type and car.transmission from dynamic params before saving basics
             const vidKolaDef = defs.find(d => isCarTypeParam(d.name));
             if (vidKolaDef) {
               const el = $(`[data-param="${vidKolaDef.id}"]`);
               if (el && el.value) car.type = el.value;
+            }
+            const gearParamDef = defs.find(d => isGearParam(d.name));
+            if (gearParamDef) {
+              const el = $(`[data-param="${gearParamDef.id}"]`);
+              if (el && el.value) car.transmission = el.value;
+            }
+            const fuelParamDef = defs.find(d => isFuelParam(d.name));
+            if (fuelParamDef) {
+              const el = $(`[data-param="${fuelParamDef.id}"]`);
+              if (el && el.value) car.fuel = el.value;
             }
             await saveBasics(isNew);
             if (!car.id) throw new Error('Създаването не беше успешно.');
@@ -3060,7 +3102,7 @@
           const type = $('#pType', wrap).value;
           if (type === 'ENUM') {
             $('#optsLabel', wrap).textContent = 'Опции (разделени със ,)';
-            optsArea.placeholder = 'например: Лека кола, Джип, Товарен бус';
+            optsArea.placeholder = 'например: Опция 1, Опция 2, Опция 3';
             optsWrap.style.display = 'block';
           } else if (type === 'NUMBER') {
             $('#optsLabel', wrap).textContent = 'Мерна единица (за number)';
@@ -4308,13 +4350,13 @@
     const hashParams = new URLSearchParams(hashQuery);
     const urlType = hashParams.get('type');
 
-    // Resolve type options from params
+    // Resolve type options from params (fallback: derive from actual car data)
     const typeDef = findCarTypeDef();
-    const typeOpts = typeDef?.options && Array.isArray(typeDef.options) && typeDef.options.length
-      ? typeDef.options : ['Лека кола', 'Джип', 'Товарен бус'];
+    const typeOpts = typeDef?.options?.length
+      ? typeDef.options : [...new Set(cars.map(c => c.type).filter(Boolean))];
     const gearDef = findGearDef();
-    const gearOpts = gearDef?.options && Array.isArray(gearDef.options) && gearDef.options.length
-      ? ['Без значение', ...gearDef.options] : ['Без значение', 'Автоматик', 'Ръчна'];
+    const gearOpts = gearDef?.options?.length
+      ? ['Без значение', ...gearDef.options] : ['Без значение', ...new Set(cars.map(c => c.transmission).filter(Boolean))];
 
     // Only show car types that actually have at least one car
     const existingTypes = [...new Set(cars.map(c => c.type).filter(Boolean))];
@@ -4364,7 +4406,7 @@
       <!-- FILTER BAR -->
       <div class="vp-filter-wrap" id="main-content">
         <div class="hero-booking" id="vpFilterBar" style="max-width:100%;margin:0 auto;">
-          <h2>Book your car</h2>
+          <h2>Наемете кола</h2>
         </div>
       </div>
 
@@ -4406,8 +4448,8 @@
 
   async function renderVpFilters(gearOpts) {
     const typeDef = findCarTypeDef();
-    const typeOptions = typeDef?.options && Array.isArray(typeDef.options) && typeDef.options.length
-      ? ['Всички', ...typeDef.options] : ['Всички', 'Лека кола', 'Джип', 'Товарен бус'];
+    const typeOptions = typeDef?.options?.length
+      ? ['Всички', ...typeDef.options] : ['Всички', ...new Set(cars.map(c => c.type).filter(Boolean))];
     let locations = [];
     try { locations = await apiFetch('/api/locations'); } catch {}
     const bar = $('#vpFilterBar');
@@ -4536,34 +4578,23 @@
       `;
       grid.appendChild(card);
 
-      // Specs — same rendering as homepage
+      // Specs — dynamic rendering from actual params
       loadCarParams(c.id).then(params => {
         const el = document.getElementById(`vp-specs-${c.id}`);
         if (!el) return;
-        const norm = (params || []).map(p => ({
-          name: p.name || '',
-          lower: (p.name || '').toLowerCase(),
-          value: p.value ?? p.valueText ?? p.valueEnum ?? p.valueNum ?? ''
+        const items = (params || [])
+          .map(p => ({ name: p.name || '', value: p.value ?? p.valueText ?? p.valueEnum ?? p.valueNum ?? '' }))
+          .filter(p => p.value !== '' && p.value !== null && p.value !== undefined);
+        const specs = items.slice(0, 3).map(p => ({
+          icon: specCardIcon(p.name),
+          text: p.value
         }));
-        const valOf = (names, fallback, fuzzy=false) => {
-          const list = Array.isArray(names) ? names : [names];
-          let found = norm.find(p => list.includes(p.name));
-          if (!found && fuzzy) {
-            const needle = list.map(s => s.toLowerCase());
-            found = norm.find(p => needle.some(n => p.lower.includes(n)));
-          }
-          const val = found?.value;
-          if (val === undefined || val === null || val === '') return fallback;
-          return val;
-        };
-        const trans = valOf(['Скоростна кутия'], c.transmission || 'Automatic', true);
-        const fuel = valOf(['Гориво','Тип гориво'], c.fuel || 'Fuel', true);
-        const specs = [
-          { icon: gearIcon(), text: trans },
-          { icon: fuelIcon(), text: fuel },
-          { icon: acIcon(), text: 'Air Conditioner' }
-        ];
-        el.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${s.text}</span></div>`).join('');
+        if (!specs.length) {
+          if (c.transmission) specs.push({ icon: gearIcon(), text: c.transmission });
+          if (c.fuel) specs.push({ icon: fuelIcon(), text: c.fuel });
+          if (c.seats) specs.push({ icon: seatIcon(), text: c.seats + ' места' });
+        }
+        el.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${escHtml(String(s.text))}</span></div>`).join('');
       }).catch(()=>{});
 
       // Availability
