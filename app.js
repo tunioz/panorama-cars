@@ -875,7 +875,7 @@
       <!-- ABOUT -->
       <section class="about-section" id="about">
         <div class="about-inner">
-          <div class="about-img"><img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='300'><rect width='400' height='300' fill='%23E5E7EB'/><text x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%239CA3AF' font-size='18'>Car Rental</text></svg>" alt=""></div>
+          <div class="about-img"><img src="about-cars.jpg" alt="Паркинг с луксозни автомобили под наем" loading="lazy"></div>
           <div class="about-points">
             <div class="about-point"><div class="about-bullet">${svgCheck}</div><div><h4>Бърза резервация</h4><p>Резервирайте кола за минути с нашата лесна онлайн система.</p></div></div>
             <div class="about-point"><div class="about-bullet">${svgCheck}</div><div><h4>Гъвкави условия</h4><p>Без скрити такси. Безплатна отмяна до 24 часа преди взимане.</p></div></div>
@@ -4634,11 +4634,8 @@
       <!-- VIDEO SECTION -->
       <section class="au-video-section">
         <div class="au-video-inner">
-          <div class="au-video-overlay">
-            <button class="au-play-btn" id="auPlayBtn">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="#fff"><path d="M8 5v14l11-7z"/></svg>
-            </button>
-          </div>
+          <img src="about-video.jpg" alt="Предаване на ключове за автомобил под наем" loading="lazy">
+          <div class="au-video-overlay"></div>
         </div>
       </section>
 
@@ -4694,9 +4691,7 @@
             </div>
           </div>
           <div class="au-memories-img">
-            <div class="au-memories-placeholder">
-              <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" stroke-width="1"><rect x="2" y="2" width="20" height="20" rx="4"/><circle cx="8" cy="8" r="2"/><path d="M2 16l5-5 3 3 4-4 8 8"/></svg>
-            </div>
+            <img src="memories-family.jpg" alt="Щастливо семейство в кола под наем" loading="lazy">
           </div>
         </div>
       </section>
@@ -4711,7 +4706,7 @@
             </div>
             <p class="au-review-text">Наех кола за семейна почивка и останах изключително доволен. Автомобилът беше чист, в перфектно състояние, а обслужването — бързо и професионално. Определено ще се върна отново!</p>
             <div class="au-review-author">
-              <div class="au-review-avatar"></div>
+              <img class="au-review-avatar" src="face-georgi.jpg" alt="Георги Димитров">
               <div>
                 <div class="au-review-name">Георги Димитров</div>
                 <div class="au-review-stars">★★★★★</div>
@@ -4724,7 +4719,7 @@
             </div>
             <p class="au-review-text">Много удобен процес на резервация. Плащането по банков път е прозрачно и без изненади. Колата беше точно както в описанието. Препоръчвам на всеки, който търси надеждна услуга!</p>
             <div class="au-review-author">
-              <div class="au-review-avatar"></div>
+              <img class="au-review-avatar" src="face-maria.jpg" alt="Мария Иванова">
               <div>
                 <div class="au-review-name">Мария Иванова</div>
                 <div class="au-review-stars">★★★★★</div>
@@ -4737,7 +4732,7 @@
             </div>
             <p class="au-review-text">Използвам услугите им за служебни пътувания от година насам. Винаги коректни, гъвкави и отзивчиви. Фактурирането е бързо и точно. Отлично партньорство за бизнеса!</p>
             <div class="au-review-author">
-              <div class="au-review-avatar"></div>
+              <img class="au-review-avatar" src="face-petar.jpg" alt="Петър Стоянов">
               <div>
                 <div class="au-review-name">Петър Стоянов</div>
                 <div class="au-review-stars">★★★★★</div>
