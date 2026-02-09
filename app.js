@@ -549,8 +549,8 @@
       // Overlay type & transmission from dynamic params (same as fetchCarsFromApi)
       try {
         if (!Array.isArray(paramDefs) || !paramDefs.length) paramDefs = await apiFetch('/api/params');
-        const typeDef = (paramDefs || []).find(p => p.name === 'Вид кола');
-        const gearDef = (paramDefs || []).find(p => p.name === 'Скоростна кутия');
+        const typeDef = findCarTypeDef();
+        const gearDef = findGearDef();
         if (typeDef || gearDef) {
           const vals = await apiFetch(`/api/cars/${id}/params`);
           if (typeDef) { const v = (vals || []).find(x => x.id === typeDef.id)?.value; if (v) car.type = v; }
@@ -611,14 +611,14 @@
         status: c.status === 'SERVICE' ? 'в сервиз' : c.status === 'RESERVED' ? 'резервиран' : 'наличен',
         favorite: false
       }));
-      // Overlay values from dynamic parameters (e.g., 'Вид кола', 'Скоростна кутия')
+      // Overlay values from dynamic parameters (car type, transmission)
       // Ensure paramDefs are loaded
       try {
         if (!Array.isArray(paramDefs) || !paramDefs.length) {
           paramDefs = await apiFetch('/api/params');
         }
-        const typeDef = (paramDefs || []).find(p => p.name === 'Вид кола');
-        const gearDef = (paramDefs || []).find(p => p.name === 'Скоростна кутия');
+        const typeDef = findCarTypeDef();
+        const gearDef = findGearDef();
         if (typeDef || gearDef) {
           const fetchWithRetry = async (url, retries = 2) => {
             for (let i = 0; i <= retries; i++) {
@@ -653,7 +653,7 @@
   let reservations = [];
   let showMoreFilters = false;
   const params = storage.get('cr_params', {
-    'Вид кола': { type: 'enum', options: ['Лека кола', 'Джип', 'Товарен бус'] },
+    'Тип кола': { type: 'enum', options: ['Лека кола', 'Джип', 'Товарен бус'] },
     'Конски сили': { type: 'number', unit: 'к.с.' }
   });
   storage.set('cr_params', params);
@@ -673,6 +673,15 @@
   let extraFilters = {};
   // Load parameter definitions from API for dynamic filters
   let paramDefs = [];
+  // Flexible lookup: finds the "car type" ENUM param regardless of name ("Вид кола", "Тип кола", etc.)
+  function findCarTypeDef() {
+    return (paramDefs || []).find(p => p.type === 'ENUM' && /(?:вид|тип)\b.*кола|кола.*(?:вид|тип)/i.test(p.name));
+  }
+  function findGearDef() {
+    return (paramDefs || []).find(p => p.type === 'ENUM' && /скоростна\s*кутия|предавк/i.test(p.name));
+  }
+  function isCarTypeParam(name) { return /(?:вид|тип)\b.*кола|кола.*(?:вид|тип)/i.test(name); }
+  function isGearParam(name) { return /скоростна\s*кутия|предавк/i.test(name); }
   async function loadReservations() {
     try { reservations = await apiFetch('/api/reservations'); }
     catch { reservations = storage.get('cr_reservations', []); }
@@ -968,11 +977,11 @@
     const root = $('#filters');
     const s = design?.components?.filter_panel;
     // Resolve dynamic options from admin-defined params
-    const typeDef = (paramDefs || []).find(p => p.name === 'Вид кола' && p.type === 'ENUM');
+    const typeDef = findCarTypeDef();
     const typeOptions = typeDef?.options && Array.isArray(typeDef.options) && typeDef.options.length
       ? ['Всички', ...typeDef.options]
       : ['Всички', 'Лека кола', 'Джип', 'Товарен бус'];
-    const gearDef = (paramDefs || []).find(p => p.name === 'Скоростна кутия' && p.type === 'ENUM');
+    const gearDef = findGearDef();
     const gearOptions = gearDef?.options && Array.isArray(gearDef.options) && gearDef.options.length
       ? ['Без значение', ...gearDef.options]
       : ['Без значение', 'Автоматик', 'Ръчна'];
@@ -1268,7 +1277,7 @@
 
   async function openAdvancedFilters() {
     if (!paramDefs?.length) await loadParamDefs();
-    const plain = paramDefs.filter(d => !['Вид кола','Скоростна кутия'].includes(d.name));
+    const plain = paramDefs.filter(d => !isCarTypeParam(d.name) && !isGearParam(d.name));
     const html = `
       <div class="modal-header">Още филтри</div>
       <div class="modal-body">
@@ -2963,8 +2972,8 @@
           btn.disabled = true; const prevText = btn.textContent; btn.textContent = 'Запис...';
           try {
             if (!$('#cBrand').value.trim() || !$('#cModel').value.trim()) throw new Error('Моля, попълнете Марка и Модел');
-            // Sync car.type from 'Вид кола' param before saving basics
-            const vidKolaDef = defs.find(d => d.name === 'Вид кола');
+            // Sync car.type from car-type param before saving basics
+            const vidKolaDef = defs.find(d => isCarTypeParam(d.name));
             if (vidKolaDef) {
               const el = $(`[data-param="${vidKolaDef.id}"]`);
               if (el && el.value) car.type = el.value;
@@ -4300,10 +4309,10 @@
     const urlType = hashParams.get('type');
 
     // Resolve type options from params
-    const typeDef = (paramDefs || []).find(p => p.name === 'Вид кола' && p.type === 'ENUM');
+    const typeDef = findCarTypeDef();
     const typeOpts = typeDef?.options && Array.isArray(typeDef.options) && typeDef.options.length
       ? typeDef.options : ['Лека кола', 'Джип', 'Товарен бус'];
-    const gearDef = (paramDefs || []).find(p => p.name === 'Скоростна кутия' && p.type === 'ENUM');
+    const gearDef = findGearDef();
     const gearOpts = gearDef?.options && Array.isArray(gearDef.options) && gearDef.options.length
       ? ['Без значение', ...gearDef.options] : ['Без значение', 'Автоматик', 'Ръчна'];
 
@@ -4323,9 +4332,11 @@
       const t = (type || '').toLowerCase();
       if (t.includes('джип') || t.includes('suv') || t.includes('офроуд'))
         return '<i class="fa-solid fa-truck-monster" style="font-size:16px;"></i>';
-      if (t.includes('товарен') || t.includes('бус') || t.includes('ван') || t.includes('van'))
+      if (t.includes('камион') || t.includes('truck'))
+        return '<i class="fa-solid fa-truck-moving" style="font-size:16px;"></i>';
+      if (t.includes('товарен') || t.includes('ван') || t.includes('van'))
         return '<i class="fa-solid fa-truck" style="font-size:16px;"></i>';
-      if (t.includes('пътнически'))
+      if (t.includes('пътнически') || t.includes('бус'))
         return '<i class="fa-solid fa-van-shuttle" style="font-size:16px;"></i>';
       if (t.includes('лека') || t.includes('sedan') || t.includes('седан'))
         return '<i class="fa-solid fa-car" style="font-size:16px;"></i>';
@@ -4394,7 +4405,7 @@
   }
 
   async function renderVpFilters(gearOpts) {
-    const typeDef = (paramDefs || []).find(p => p.name === 'Вид кола' && p.type === 'ENUM');
+    const typeDef = findCarTypeDef();
     const typeOptions = typeDef?.options && Array.isArray(typeDef.options) && typeDef.options.length
       ? ['Всички', ...typeDef.options] : ['Всички', 'Лека кола', 'Джип', 'Товарен бус'];
     let locations = [];
