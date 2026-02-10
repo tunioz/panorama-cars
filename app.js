@@ -391,9 +391,17 @@
   }
   // Normalize DB enum values for human display (DIESEL → Diesel, AUTOMATIC → Automatic)
   function displayVal(v) {
-    if (!v || typeof v !== 'string') return v || '';
-    // If it's all uppercase, convert to title case
-    if (v === v.toUpperCase() && v.length > 1) return v.charAt(0) + v.slice(1).toLowerCase();
+    if (!v || typeof v !== 'string') return '';
+    const n = v.trim().toLowerCase();
+    // Transmission
+    if (n === 'manual' || n === 'ръчна') return 'Ръчна';
+    if (n === 'automatic' || n.includes('автомат')) return 'Автоматик';
+    // Fuel
+    if (n === 'diesel' || n === 'дизел') return 'Дизел';
+    if (n === 'petrol' || n === 'бензин') return 'Бензин';
+    if (n === 'electric' || n === 'ток') return 'Ток';
+    if (n === 'hybrid' || n === 'хибрид') return 'Хибрид';
+    // Already readable or unknown — return as-is
     return v;
   }
   function getParamIcon(name) {
@@ -536,7 +544,7 @@
   }
   async function fetchCarById(id) {
     try {
-      const res = await fetch(`${API_BASE}/api/cars/${id}`, { headers: { accept: 'application/json' } });
+      const res = await fetch(`${API_BASE}/api/cars/${id}`, { headers: { accept: 'application/json' }, cache: 'no-store' });
       if (!res.ok) throw new Error('Failed');
       const c = await res.json();
       const car = {
@@ -549,23 +557,11 @@
         fuel: displayVal(c.fuel),
         seats: c.seats || null,
         bodyStyle: c.bodyStyle || '',
+        year: c.year || null,
         type: c.type || '',
         images: Array.isArray(c.images) ? c.images : [],
         status: c.status === 'SERVICE' ? 'в сервиз' : c.status === 'RESERVED' ? 'резервиран' : 'наличен'
       };
-      // Overlay type, transmission & fuel from dynamic params (same as fetchCarsFromApi)
-      try {
-        if (!Array.isArray(paramDefs) || !paramDefs.length) paramDefs = await apiFetch('/api/params');
-        const typeDef = findCarTypeDef();
-        const gearDef = findGearDef();
-        const fuelDef = findFuelDef();
-        if (typeDef || gearDef || fuelDef) {
-          const vals = await apiFetch(`/api/cars/${id}/params`);
-          if (typeDef) { const v = (vals || []).find(x => x.id === typeDef.id)?.value; if (v) car.type = v; }
-          if (gearDef) { const g = (vals || []).find(x => x.id === gearDef.id)?.value; if (g) car.transmission = g; }
-          if (fuelDef) { const f = (vals || []).find(x => x.id === fuelDef.id)?.value; if (f) car.fuel = f; }
-        }
-      } catch {}
       return car;
     } catch (e) { console.error(e); return null; }
   }
@@ -600,7 +596,7 @@
   }
   async function fetchCarsFromApi() {
     try {
-      const res = await fetch(`${API_BASE}/api/cars`, { headers: { accept: 'application/json' } });
+      const res = await fetch(`${API_BASE}/api/cars`, { headers: { accept: 'application/json' }, cache: 'no-store' });
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       // Map API enums to UI fields
@@ -615,46 +611,12 @@
         rating: typeof c.rating === 'number' ? c.rating : 4.6,
         distanceKm: typeof c.distanceKm === 'number' ? c.distanceKm : 0.8,
         etaMin: typeof c.etaMin === 'number' ? c.etaMin : 3,
+        year: c.year || null,
         type: c.type || '',
         images: Array.isArray(c.images) ? c.images : [],
         status: c.status === 'SERVICE' ? 'в сервиз' : c.status === 'RESERVED' ? 'резервиран' : 'наличен',
         favorite: false
       }));
-      // Overlay values from dynamic parameters (car type, transmission, fuel)
-      // Ensure paramDefs are loaded
-      try {
-        if (!Array.isArray(paramDefs) || !paramDefs.length) {
-          paramDefs = await apiFetch('/api/params');
-        }
-        const typeDef = findCarTypeDef();
-        const gearDef = findGearDef();
-        const fuelDef = findFuelDef();
-        if (typeDef || gearDef || fuelDef) {
-          const fetchWithRetry = async (url, retries = 2) => {
-            for (let i = 0; i <= retries; i++) {
-              try { return await apiFetch(url); } catch (e) { if (i === retries) throw e; }
-            }
-          };
-          list = await Promise.all(list.map(async (car) => {
-            try {
-              const vals = await fetchWithRetry(`/api/cars/${car.id}/params`);
-              if (typeDef) {
-                const v = (vals || []).find(x => x.id === typeDef.id)?.value;
-                if (v) car.type = v;
-              }
-              if (gearDef) {
-                const g = (vals || []).find(x => x.id === gearDef.id)?.value;
-                if (g) car.transmission = g;
-              }
-              if (fuelDef) {
-                const f = (vals || []).find(x => x.id === fuelDef.id)?.value;
-                if (f) car.fuel = f;
-              }
-            } catch (e) { console.warn(`[overlay] params for car ${car.id} failed:`, e); }
-            return car;
-          }));
-        }
-      } catch (e) { console.warn('[overlay] param overlay failed:', e); }
       return list;
     } catch {
       return null;
@@ -662,6 +624,11 @@
   }
   let cars = await fetchCarsFromApi() || storage.get('cr_cars', cloneCars());
   storage.set('cr_cars', cars);
+  /** Refresh cars from API — always returns fresh data after admin edits */
+  async function refreshCars() {
+    const fresh = await fetchCarsFromApi();
+    if (fresh) { cars = fresh; storage.set('cr_cars', cars); }
+  }
   let filtered = [...cars];
   let selected = filtered[0];
   let reservations = [];
@@ -1066,8 +1033,7 @@
     const bindDateSnap = (el, key) => {
       if (!el) return;
       const apply = () => { const v = snapMinutesLocal(el.value); el.value = v; filterState[key] = v; };
-      el.onfocus = (e) => e.target.showPicker?.();
-      el.onclick = (e) => e.target.showPicker?.();
+      // Don't set onfocus/onclick to showPicker — the custom DTP handles opening
       el.onchange = apply;
       el.oninput = apply;
     };
@@ -1094,7 +1060,7 @@
         if (n.includes('ръч') || n === 'manual') return 'manual';
         return n;
       };
-      if (filterState.transmission !== 'Any') {
+      if (filterState.transmission !== 'Any' && filterState.transmission !== 'Без значение') {
         if (mapTx(c.transmission) !== mapTx(filterState.transmission)) return false;
       }
       if (filterState.type !== 'Всички' && c.type !== filterState.type) return false;
@@ -1125,7 +1091,7 @@
     if (mode === 'Closest to me') filtered.sort((a,b) => a.distanceKm - b.distanceKm);
     if (mode === 'Price: Low to High') filtered.sort((a,b) => (a.pricePerDay||0) - (b.pricePerDay||0));
     if (mode === 'Price: High to Low') filtered.sort((a,b) => (b.pricePerDay||0) - (a.pricePerDay||0));
-    if (mode === 'Newest') filtered.sort((a,b) => b.year - a.year);
+    if (mode === 'Newest') filtered.sort((a,b) => (b.year || 0) - (a.year || 0));
   }
   // Shared car spec SVG icons — used by both homepage and vehicles page
   // Shared icon helper: maps any param name → SVG/FA icon for car cards
@@ -1232,25 +1198,15 @@
         </div>
       `;
       grid.appendChild(card);
-      const renderSpecs = (params=[]) => {
-        const el = document.getElementById(`specs-${c.id}`);
-        if (!el) return;
-        // Show up to 3 params that have actual values
-        const items = (params || [])
-          .map(p => ({ name: p.name || '', value: p.value ?? p.valueText ?? p.valueEnum ?? p.valueNum ?? '' }))
-          .filter(p => p.value !== '' && p.value !== null && p.value !== undefined);
-        const specs = items.slice(0, 3).map(p => ({
-          icon: specCardIcon(p.name),
-          text: p.value
-        }));
-        // If no params, try fallback from car fields
-        if (!specs.length) {
-          if (c.transmission) specs.push({ icon: gearIcon(), text: c.transmission });
-          if (c.fuel) specs.push({ icon: fuelIcon(), text: c.fuel });
-          if (c.seats) specs.push({ icon: seatIcon(), text: c.seats + ' места' });
-        }
-        el.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${escHtml(String(s.text))}</span></div>`).join('');
-      };
+      // Render specs directly from car fields (no extra API calls)
+      const specsEl = document.getElementById(`specs-${c.id}`);
+      if (specsEl) {
+        const specs = [];
+        if (c.transmission) specs.push({ icon: gearIcon(), text: c.transmission });
+        if (c.fuel) specs.push({ icon: fuelIcon(), text: c.fuel });
+        if (c.seats) specs.push({ icon: seatIcon(), text: c.seats + ' места' });
+        specsEl.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${escHtml(String(s.text))}</span></div>`).join('');
+      }
       const availability = (() => {
         const selFrom = filterState.from;
         const selTo = filterState.to;
@@ -1270,11 +1226,6 @@
         else if (selFrom && selTo && hasOverlap) { label = 'Резервиран'; available = false; }
         return { available, label };
       })();
-      loadCarParams(c.id).then(list => {
-        const norm = (list || []).map(p => ({ name: p.name, value: p.value || p.valueText || p.valueEnum || p.valueNum || '' }));
-        renderSpecs(norm);
-      }).catch(() => renderSpecs([]));
-
       const btn = card.querySelector('.cc-btn');
       if (btn && !availability.available) {
         btn.disabled = true;
@@ -1940,8 +1891,7 @@
       const bindDateSnap = (el, key) => {
         if (!el) return;
         const apply = () => { const v = snapMinutesLocal(el.value); el.value = v; draft[key] = v; };
-        el.onfocus = (e) => e.target.showPicker?.();
-        el.onclick = (e) => e.target.showPicker?.();
+        // Don't set onfocus/onclick to showPicker — the custom DTP handles opening
         el.onchange = apply;
         el.oninput = apply;
       };
@@ -2765,7 +2715,7 @@
       };
       $('#carRows').innerHTML = cars.map(c => `
         <tr>
-          <td>${c.brand}</td><td>${c.model}</td><td>${c.type}</td><td>€${c.pricePerDay||0}</td>
+          <td>${escHtml(c.brand)}</td><td>${escHtml(c.model)}</td><td>${escHtml(c.type)}</td><td>€${c.pricePerDay||0}</td>
           <td><select data-status="${c.id}" class="select" style="height:32px;">
             ${['наличен','в сервиз','резервиран'].map(s => `<option ${c.status===s?'selected':''}>${s}</option>`).join('')}
           </select></td>
@@ -2827,9 +2777,17 @@
       const existing = cars.find(c => c.id === id);
       const car = existing || { id: uid(), brand:'', model:'', trim:'', pricePerDay:0, type:'', status:'наличен', images: [] };
       const isNew = !existing;
+      let _apiLoaded = isNew; // track whether we have raw API data (new cars don't need it)
       async function loadCarFromApi() {
         // Винаги зареждаме свежи данни от API (списъкът може да няма images и други полета)
-        try { const apiCar = await fetch(`${API_BASE}/api/cars/${id}`).then(r => r.json()); Object.assign(car, apiCar); } catch {}
+        try {
+          const apiCar = await fetch(`${API_BASE}/api/cars/${id}`).then(r => r.json());
+          Object.assign(car, apiCar);
+          _apiLoaded = true;
+        } catch {
+          // If API fails for existing car, flag it so we can block save (prevents displayVal corruption)
+          if (!isNew) _apiLoaded = false;
+        }
       }
       async function loadParamDefsWithValues() {
         try {
@@ -2852,7 +2810,8 @@
               <input id="cBrand" class="input" placeholder="Марка" value="${car.brand}">
               <input id="cModel" class="input" placeholder="Модел" value="${car.model}">
               <select id="cStatus" class="select">
-                ${['наличен','в сервиз'].map(s => `<option ${car.status===s?'selected':''}>${s}</option>`).join('')}
+                <option value="AVAILABLE" ${['наличен','AVAILABLE'].includes(car.status)?'selected':''}>Наличен</option>
+                <option value="SERVICE" ${['в сервиз','SERVICE'].includes(car.status)?'selected':''}>В сервиз</option>
               </select>
             </div>
             <div class="grid-3">
@@ -3004,17 +2963,22 @@
           btn.disabled = true; const prevText = btn.textContent; btn.textContent = 'Запис...';
           try {
             if (!$('#cBrand').value.trim() || !$('#cModel').value.trim()) throw new Error('Моля, попълнете Марка и Модел');
-            // Sync car.type and car.transmission from dynamic params before saving basics
-            const vidKolaDef = defs.find(d => isCarTypeParam(d.name));
+            if (!isNew && !_apiLoaded) throw new Error('Не успяхме да заредим данни от сървъра. Моля, опреснете страницата и опитайте отново.');
+            // Sync car fields from dynamic params before saving basics
+            // 1. Sync car.type from "Тип кола" / "Вид кола"
+            const vidKolaDef = defs.find(d => isCarTypeParam(d.name))
+              || defs.find(d => d.type === 'ENUM' && /тип|вид|категория|клас/i.test(d.name) && !/горив|fuel|скорост|transm/i.test(d.name));
             if (vidKolaDef) {
               const el = $(`[data-param="${vidKolaDef.id}"]`);
-              if (el && el.value) car.type = el.value;
+              if (el) car.type = el.value || '';
             }
+            // 2. Sync car.transmission from "Скоростна кутия" etc.
             const gearParamDef = defs.find(d => isGearParam(d.name));
             if (gearParamDef) {
               const el = $(`[data-param="${gearParamDef.id}"]`);
               if (el && el.value) car.transmission = el.value;
             }
+            // 3. Sync car.fuel from "Гориво" etc.
             const fuelParamDef = defs.find(d => isFuelParam(d.name));
             if (fuelParamDef) {
               const el = $(`[data-param="${fuelParamDef.id}"]`);
@@ -3030,6 +2994,10 @@
               return { paramId, type, value: val };
             });
             await apiFetch(`/api/cars/${car.id}/params`, { method: 'PUT', body: JSON.stringify({ items }) });
+            // Clear params cache so detail modals get fresh data
+            carParamsCache.delete(car.id);
+            // Ensure cars array is fresh before navigating to list
+            await refreshCars();
             navigate('#/admin/cars');
           } catch (e) {
             alert(e.message || 'Грешка при запис.');
@@ -4498,8 +4466,7 @@
     const bindSnap = (el, key) => {
       if (!el) return;
       const apply = () => { const v = snapMinutesLocal(el.value); el.value = v; filterState[key] = v; };
-      el.onfocus = (e) => e.target.showPicker?.();
-      el.onclick = (e) => e.target.showPicker?.();
+      // Don't set onfocus/onclick to showPicker — the custom DTP handles opening
       el.onchange = apply; el.oninput = apply;
     };
     bindSnap($('#vpFrom'), 'from');
@@ -4519,7 +4486,7 @@
         if (n.includes('ръч') || n === 'manual') return 'manual';
         return n;
       };
-      if (filterState.transmission !== 'Any') {
+      if (filterState.transmission !== 'Any' && filterState.transmission !== 'Без значение') {
         if (mapTx(c.transmission) !== mapTx(filterState.transmission)) return false;
       }
       if (filterState.type !== 'Всички' && c.type !== filterState.type) return false;
@@ -4578,24 +4545,15 @@
       `;
       grid.appendChild(card);
 
-      // Specs — dynamic rendering from actual params
-      loadCarParams(c.id).then(params => {
-        const el = document.getElementById(`vp-specs-${c.id}`);
-        if (!el) return;
-        const items = (params || [])
-          .map(p => ({ name: p.name || '', value: p.value ?? p.valueText ?? p.valueEnum ?? p.valueNum ?? '' }))
-          .filter(p => p.value !== '' && p.value !== null && p.value !== undefined);
-        const specs = items.slice(0, 3).map(p => ({
-          icon: specCardIcon(p.name),
-          text: p.value
-        }));
-        if (!specs.length) {
-          if (c.transmission) specs.push({ icon: gearIcon(), text: c.transmission });
-          if (c.fuel) specs.push({ icon: fuelIcon(), text: c.fuel });
-          if (c.seats) specs.push({ icon: seatIcon(), text: c.seats + ' места' });
-        }
-        el.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${escHtml(String(s.text))}</span></div>`).join('');
-      }).catch(()=>{});
+      // Render specs directly from car fields (no extra API calls)
+      const specsEl = document.getElementById(`vp-specs-${c.id}`);
+      if (specsEl) {
+        const specs = [];
+        if (c.transmission) specs.push({ icon: gearIcon(), text: c.transmission });
+        if (c.fuel) specs.push({ icon: fuelIcon(), text: c.fuel });
+        if (c.seats) specs.push({ icon: seatIcon(), text: c.seats + ' места' });
+        specsEl.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${escHtml(String(s.text))}</span></div>`).join('');
+      }
 
       // Availability
       const selFrom = filterState.from;
@@ -5461,7 +5419,12 @@
       renderAdminDashboard(); scrollToTop(); return;
     }
     if (hash.startsWith('#/reserve')) { renderWizard(); scrollToTop(); return; }
-    if (hash.startsWith('#/vehicles')) { mountVehiclesPage(); scrollToTop(); return; }
+    if (hash.startsWith('#/vehicles')) {
+      mountVehiclesPage(); scrollToTop();
+      // Background refresh — re-render vehicles with fresh data
+      refreshCars().then(() => { if ((location.hash||'').startsWith('#/vehicles')) renderVpResults(); }).catch(() => {});
+      return;
+    }
     if (hash.startsWith('#/about-us')) { mountAboutUsPage(); scrollToTop(); return; }
     if (hash.startsWith('#/policies')) { mountPoliciesPage(); scrollToTop(); return; }
     // default home
@@ -5469,6 +5432,11 @@
     renderFilters();
     applyFilters();
     scrollToTop();
+    // Background refresh — re-render homepage with fresh data
+    refreshCars().then(() => {
+      const h = location.hash || '#/';
+      if (h === '#/' || h === '' || h === '#') { renderFilters(); applyFilters(); }
+    }).catch(() => {});
   }
 
   // Kickoff router

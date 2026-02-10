@@ -23,11 +23,10 @@ coverage/
 # Prisma
 server/prisma/migrations/*_tmp/
 
-# SQLite database — NOT tracked in git (Railway volume persists production data)
+# Old SQLite database files (no longer used)
 server/prisma/dev.db
 server/prisma/dev.db-journal
 server/prisma/dev.db-wal
 
-# Keep env in VCS for this project (no secrets). Provide example too.
-
-
+# Environment (contains DATABASE_URL with credentials)
+server/.env

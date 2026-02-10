@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -74,13 +74,13 @@ model Reservation {
   driverAddress String?
   invoiceType   String?
   invoiceName   String?
-  invoiceNum    String?   // ЕИК или ЕГН
-  invoiceEgn    String?   // ЕГН (ако е физическо лице)
-  invoiceVat    String?   // ДДС № (ако е фирма)
-  invoiceMol    String?   // МОЛ
-  invoiceBank   String?   // Банка
-  invoiceIban   String?   // IBAN
-  invoiceBic    String?   // BIC
+  invoiceNum    String?
+  invoiceEgn    String?
+  invoiceVat    String?
+  invoiceMol    String?
+  invoiceBank   String?
+  invoiceIban   String?
+  invoiceBic    String?
   invoiceAddr   String?
   invoiceEmail  String?
   status     String             @default("REQUESTED")
@@ -95,16 +95,15 @@ model Invoice {
   id              String       @id @default(cuid())
   reservation     Reservation  @relation(fields: [reservationId], references: [id], onDelete: Cascade)
   reservationId   String
-  type            String       // PROFORMA | INVOICE
+  type            String
   number          String?      @unique
   issueDate       DateTime     @default(now())
   dueDate         DateTime?
   currency        String       @default("EUR")
   paymentMethod   String?
   paymentTerms    String?
-  status          String       @default("DRAFT") // DRAFT | ISSUED | PAID | CANCELLED
+  status          String       @default("DRAFT")
   notes           String?
-  // Supplier snapshot (from CompanyInfo at time of issuing)
   supplierName    String
   supplierEik     String
   supplierVat     String?
@@ -115,8 +114,7 @@ model Invoice {
   supplierBank    String?
   supplierIban    String?
   supplierBic     String?
-  // Buyer data (from reservation / edited)
-  buyerType       String?      // company | individual
+  buyerType       String?
   buyerName       String?
   buyerEik        String?
   buyerVat        String?
@@ -127,8 +125,7 @@ model Invoice {
   buyerBank       String?
   buyerIban       String?
   buyerBic        String?
-  // Lines
-  items           String?      // JSON: [{description, qty, unitPrice, vatRate, totalNet, totalVat, totalGross}]
+  items           String?
   subtotal        Float?
   vatAmount       Float?
   total           Float?
@@ -155,19 +152,19 @@ model Location {
 model CompanyInfo {
   id        String   @id @default(cuid())
   name      String
-  eik       String   // ЕИК/БУЛСТАТ
-  vat       String?  // ДДС № (ако има)
+  eik       String
+  vat       String?
   address   String
   city      String
   country   String   @default("България")
-  mol       String?  // МОЛ
+  mol       String?
   email     String?
   phone     String?
   bank      String?
   iban      String?
   bic       String?
-  proStart  Int      @default(1) // стартов номер за проформи
-  invStart  Int      @default(1) // стартов номер за фактури
+  proStart  Int      @default(1)
+  invStart  Int      @default(1)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -176,9 +173,7 @@ model Policy {
   id        String   @id @default(cuid())
   slug      String   @unique
   title     String
-  content   String?  // HTML content from WYSIWYG editor
+  content   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
-
-

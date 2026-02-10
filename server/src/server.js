@@ -33,6 +33,13 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('dev'));
+// Prevent browser from caching API responses (ensures fresh data after admin edits)
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Upload helpers
@@ -227,6 +234,11 @@ async function createInvoiceForReservation(reservation, type = 'PROFORMA', compa
   });
 }
 
+// ─── Prevent server crashes from unhandled async errors (Express 4) ───
+process.on('unhandledRejection', (err) => {
+  console.error('[unhandledRejection]', err?.message || err);
+});
+
 // Health
 app.get('/health', async (req, res) => {
   try {
@@ -282,29 +294,43 @@ app.post('/api/cars', async (req, res) => {
   res.status(201).json(created);
 });
 app.put('/api/cars/:id', async (req, res) => {
-  const b = req.body || {};
-  const data = {
-    brand: b.brand,
-    model: b.model,
-    trim: b.trim || null,
-    pricePerHour: b.pricePerHour ?? 0,
-    pricePerDay: b.pricePerDay ?? null,
-    bodyStyle: b.bodyStyle || null,
-    transmission: b.transmission || null,
-    fuel: b.fuel || null,
-    seats: b.seats ?? null,
-    type: b.type || null,
-    status: b.status || 'AVAILABLE',
-    images: Array.isArray(b.images) ? JSON.stringify(b.images) : (typeof b.images === 'string' ? b.images : null)
-  };
-  const updated = await prisma.car.update({ where: { id: req.params.id }, data });
-  await logAction(null, 'car.update', { id: updated.id });
-  res.json(updated);
+  try {
+    const b = req.body || {};
+    const existing = await prisma.car.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Car not found' });
+    const data = {
+      brand: b.brand,
+      model: b.model,
+      trim: b.trim || null,
+      pricePerHour: b.pricePerHour ?? 0,
+      pricePerDay: b.pricePerDay ?? null,
+      bodyStyle: b.bodyStyle || null,
+      transmission: b.transmission || null,
+      fuel: b.fuel || null,
+      seats: b.seats ?? null,
+      type: b.type || null,
+      status: b.status || 'AVAILABLE',
+      images: Array.isArray(b.images) ? JSON.stringify(b.images) : (typeof b.images === 'string' ? b.images : null)
+    };
+    const updated = await prisma.car.update({ where: { id: req.params.id }, data });
+    await logAction(null, 'car.update', { id: updated.id });
+    res.json(updated);
+  } catch (e) {
+    console.error('[PUT /api/cars/:id]', e?.message || e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'Server error' });
+  }
 });
 app.delete('/api/cars/:id', async (req, res) => {
-  await prisma.car.delete({ where: { id: req.params.id } });
-  await logAction(null, 'car.delete', { id: req.params.id });
-  res.status(204).end();
+  try {
+    const existing = await prisma.car.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Car not found' });
+    await prisma.car.delete({ where: { id: req.params.id } });
+    await logAction(null, 'car.delete', { id: req.params.id });
+    res.status(204).end();
+  } catch (e) {
+    console.error('[DELETE /api/cars/:id]', e?.message || e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'Server error' });
+  }
 });
 
 // Car images upload
@@ -398,9 +424,16 @@ app.put('/api/params/:id', async (req, res) => {
   res.json(updated);
 });
 app.delete('/api/params/:id', async (req, res) => {
-  await prisma.carParamDef.delete({ where: { id: req.params.id } });
-  await logAction(null, 'param.delete', { id: req.params.id });
-  res.status(204).end();
+  try {
+    const existing = await prisma.carParamDef.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Param not found' });
+    await prisma.carParamDef.delete({ where: { id: req.params.id } });
+    await logAction(null, 'param.delete', { id: req.params.id });
+    res.status(204).end();
+  } catch (e) {
+    console.error('[DELETE /api/params/:id]', e?.message || e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'Server error' });
+  }
 });
 
 // Car parameter values
@@ -678,9 +711,7 @@ app.post('/api/invoices', async (req, res) => {
   };
   const created = await prisma.invoice.create({ data });
   if (data.status === 'PAID') {
-    await prisma.reservation.update({ where: { id: reservationId }, data: { status: 'paid' } });
-  } else if (type === 'INVOICE') {
-    await prisma.reservation.update({ where: { id: reservationId }, data: { status: 'invoiced' } });
+    await prisma.reservation.update({ where: { id: reservationId }, data: { status: 'PAID' } });
   }
   await logAction(null, 'invoice.create', { id: created.id, reservationId });
   res.status(201).json(created);
@@ -735,7 +766,7 @@ app.put('/api/invoices/:id', async (req, res) => {
   };
   const updated = await prisma.invoice.update({ where: { id: req.params.id }, data });
   if (data.status === 'PAID') {
-    await prisma.reservation.update({ where: { id: inv.reservationId }, data: { status: 'paid' } });
+    await prisma.reservation.update({ where: { id: inv.reservationId }, data: { status: 'PAID' } });
   }
   await logAction(null, 'invoice.update', { id: updated.id, reservationId: inv.reservationId });
   res.json(updated);
@@ -768,9 +799,16 @@ app.post('/api/locations', async (req, res) => {
   res.status(201).json(created);
 });
 app.delete('/api/locations/:id', async (req, res) => {
-  await prisma.location.delete({ where: { id: req.params.id } });
-  await logAction(null, 'location.delete', { id: req.params.id });
-  res.status(204).end();
+  try {
+    const existing = await prisma.location.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Location not found' });
+    await prisma.location.delete({ where: { id: req.params.id } });
+    await logAction(null, 'location.delete', { id: req.params.id });
+    res.status(204).end();
+  } catch (e) {
+    console.error('[DELETE /api/locations/:id]', e?.message || e);
+    if (!res.headersSent) res.status(500).json({ error: e.message || 'Server error' });
+  }
 });
 
 // Company info
@@ -835,6 +873,14 @@ app.get('*', (req, res) => {
     return res.status(404).send('Not found');
   }
   res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
+});
+
+// ─── Global Express error handler ───
+app.use((err, req, res, next) => {
+  console.error('[EXPRESS_ERROR]', err?.message || err);
+  if (!res.headersSent) {
+    res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+  }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
