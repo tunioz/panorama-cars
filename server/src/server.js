@@ -10,6 +10,7 @@ import sharp from 'sharp';
 import path from 'path';
 import fs from 'fs';
 import { PrismaClient } from '@prisma/client';
+import { sendReservationEmail } from './mailer.js';
 
 const prisma = new PrismaClient();
 const app = express();
@@ -99,6 +100,14 @@ async function normalizeReservationExpiry(resList) {
     }
   }
 }
+/* Strip legacy parenthetical date/qty suffixes from stored descriptions */
+function cleanDesc(d) {
+  if (!d) return d;
+  d = d.replace(/\s*\(\d{2}[\.\-]\d{2}[\.\-]\d{4}\s*г?\.?\s*→\s*\d{2}[\.\-]\d{2}[\.\-]\d{4}\s*г?\.?\s*\)$/, '');
+  d = d.replace(/\s*\(\d+\s*дни?\s*(?:[×x]\s*€?\d+[\.,]?\d*\/ден)?\)$/, '');
+  return d.trim();
+}
+
 function normalizeItems(items) {
   if (typeof items === 'string') {
     try { items = JSON.parse(items); } catch { items = []; }
@@ -106,13 +115,13 @@ function normalizeItems(items) {
   if (!Array.isArray(items)) return [];
   return items.map(it => {
     const qty = Number(it.qty ?? it.quantity ?? 1);
-    const unitPrice = Number(it.unitPrice ?? it.price ?? 0);
+    const unitPrice = Number(it.unitPrice ?? it.price ?? 0); // цена С ДДС
     const vatRate = Number(it.vatRate ?? 20);
-    const totalNet = qty * unitPrice;
-    const totalVat = totalNet * (vatRate / 100);
-    const totalGross = totalNet + totalVat;
+    const totalGross = qty * unitPrice; // обща сума С ДДС
+    const totalNet = totalGross / (1 + vatRate / 100); // обща сума БЕЗ ДДС
+    const totalVat = totalGross - totalNet; // сума на ДДС
     return {
-      description: it.description || 'Услуга',
+      description: cleanDesc(it.description) || 'Услуга',
       qty,
       unitPrice,
       vatRate,
@@ -188,13 +197,36 @@ async function createInvoiceForReservation(reservation, type = 'PROFORMA', compa
   const issueDate = new Date();
   const number = await generateInvoiceNumber(type, issueDate, { proStart: company?.proStart, invStart: company?.invStart });
   const days = Math.max(1, Math.ceil((new Date(reservation.to) - new Date(reservation.from)) / 86400000));
-  const rate = reservation.ratePerDay || (reservation.total && days ? reservation.total / days : Number(car?.pricePerDay || 0));
-  const items = normalizeItems([{
-    description: `Наем на автомобил ${car?.brand||reservation.car?.brand||''} ${car?.model||reservation.car?.model||''} (${fmtDateBg(reservation.from)} → ${fmtDateBg(reservation.to)})`,
+  const extraDriverRate = Number(company?.extraDriverPrice || 10);
+  const insuranceRate = Number(company?.insurancePrice || 15);
+  // For existing invoices, recalculate rate from total minus extras
+  let baseTotal = Number(reservation.total || 0);
+  if (reservation.extraDriver) baseTotal -= extraDriverRate * days;
+  if (reservation.insurance) baseTotal -= insuranceRate * days;
+  const rate = reservation.ratePerDay || (baseTotal && days ? baseTotal / days : Number(car?.pricePerDay || 0));
+  const rawItems = [{
+    description: `Наем на автомобил ${car?.brand||reservation.car?.brand||''} ${car?.model||reservation.car?.model||''}`.trim(),
     qty: days,
     unitPrice: rate,
     vatRate: 20
-  }]);
+  }];
+  if (reservation.extraDriver) {
+    rawItems.push({
+      description: 'Допълнителен шофьор',
+      qty: days,
+      unitPrice: extraDriverRate,
+      vatRate: 20
+    });
+  }
+  if (reservation.insurance) {
+    rawItems.push({
+      description: 'Пълно каско (Full Coverage)',
+      qty: days,
+      unitPrice: insuranceRate,
+      vatRate: 20
+    });
+  }
+  const items = normalizeItems(rawItems);
   const { subtotal, vatAmount, total } = calcTotals(items);
   await ensureInvoiceNumber(number, type);
   return await prisma.invoice.create({
@@ -499,7 +531,15 @@ app.post('/api/reservations', async (req, res) => {
   const fromDt = new Date(data.from);
   const toDt = new Date(data.to);
   const days = Math.max(1, Math.ceil((toDt - fromDt) / 86400000));
-  const total = rate * days;
+  // Extras: extra driver per day + insurance flat
+  const company = await prisma.companyInfo.findFirst();
+  const wantsExtraDriver = !!data.extraDriver;
+  const wantsInsurance = !!data.insurance;
+  const extraDriverRate = Number(company?.extraDriverPrice || 10);
+  const insuranceRate = Number(company?.insurancePrice || 15);
+  let total = rate * days;
+  if (wantsExtraDriver) total += extraDriverRate * days;
+  if (wantsInsurance) total += insuranceRate * days;
   const created = await prisma.reservation.create({ data: {
     seq: nextSeq,
     carId: data.carId,
@@ -524,6 +564,8 @@ app.post('/api/reservations', async (req, res) => {
     invoiceBic: data.invoice?.bic || null,
     invoiceAddr: data.invoice?.addr || null,
     invoiceEmail: data.invoice?.email || null,
+    extraDriver: wantsExtraDriver,
+    insurance: wantsInsurance,
     total,
     ratePerDay: rate,
     currency: data.currency || 'EUR',
@@ -531,15 +573,32 @@ app.post('/api/reservations', async (req, res) => {
   }});
   // auto-create proforma if има данни за фактура
   try {
-    const company = await prisma.companyInfo.findFirst();
+    // company already loaded above for extras pricing
     const issueDate = new Date();
     const number = await generateInvoiceNumber('PROFORMA', issueDate, { proStart: company?.proStart, invStart: company?.invStart });
-    const items = normalizeItems([{
-      description: `Наем на автомобил ${car?.brand||''} ${car?.model||''} (${fmtDateBg(fromDt)} → ${fmtDateBg(toDt)})`,
+    const rawItems = [{
+      description: `Наем на автомобил ${car?.brand||''} ${car?.model||''}`.trim(),
       qty: days,
       unitPrice: rate,
       vatRate: 20
-    }]);
+    }];
+    if (wantsExtraDriver) {
+      rawItems.push({
+        description: 'Допълнителен шофьор',
+        qty: days,
+        unitPrice: extraDriverRate,
+        vatRate: 20
+      });
+    }
+    if (wantsInsurance) {
+      rawItems.push({
+        description: 'Пълно каско (Full Coverage)',
+        qty: days,
+        unitPrice: insuranceRate,
+        vatRate: 20
+      });
+    }
+    const items = normalizeItems(rawItems);
     const { subtotal, vatAmount, total: invTotal } = calcTotals(items);
     await ensureInvoiceNumber(number, 'PROFORMA');
     await prisma.invoice.create({
@@ -582,6 +641,20 @@ app.post('/api/reservations', async (req, res) => {
     // ignore proforma auto-create errors to not block reservation
   }
   await logAction(null, 'reservation.create', { id: created.id, seq: nextSeq });
+
+  // ─── Send confirmation email (async, non-blocking) ───
+  (async () => {
+    try {
+      const fullRes = await prisma.reservation.findUnique({ where: { id: created.id }, include: { car: true, invoices: true } });
+      const invoice = (fullRes?.invoices || []).find(i => i.type === 'PROFORMA') || null;
+      const policySlugs = ['terms', 'cancellation', 'insurance'];
+      const pols = await prisma.policy.findMany({ where: { slug: { in: policySlugs } } });
+      await sendReservationEmail({ reservation: fullRes, invoice, company, policies: pols });
+    } catch (err) {
+      console.error('[reservation] Email send error (non-blocking):', err.message);
+    }
+  })();
+
   res.status(201).json(created);
 });
 
@@ -605,6 +678,32 @@ app.get('/api/reservations/:id', async (req, res) => {
   }
   res.json(reservation);
 });
+
+// Download proforma PDF for a reservation
+app.get('/api/reservations/:id/pdf', async (req, res) => {
+  const reservation = await prisma.reservation.findUnique({
+    where: { id: req.params.id },
+    include: { car: true, invoices: true }
+  });
+  if (!reservation) return res.status(404).json({ error: 'Not found' });
+  const company = await prisma.companyInfo.findFirst();
+  const invoice = (reservation.invoices || []).find(i => i.type === 'PROFORMA') || (reservation.invoices || [])[0] || null;
+  const policySlugs = ['terms', 'cancellation', 'insurance'];
+  const policies = await prisma.policy.findMany({ where: { slug: { in: policySlugs } } });
+  try {
+    const { generateProformaPdf } = await import('./mailer.js');
+    const pdfBuffer = await generateProformaPdf({ reservation, invoice, company, policies });
+    const filename = invoice?.number ? `${invoice.number}.pdf` : `proforma-${reservation.seq || reservation.id}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('[pdf] Generation error:', err.message);
+    res.status(500).json({ error: 'PDF generation failed' });
+  }
+});
+
 app.patch('/api/reservations/:id/status', async (req, res) => {
   const { status } = req.body;
   const normalized = normalizeStatusValue(status);
@@ -663,7 +762,7 @@ app.post('/api/invoices', async (req, res) => {
     const days = Math.max(1, Math.ceil((new Date(reservation.to) - new Date(reservation.from)) / 86400000));
     const unitPrice = reservation.total && days ? reservation.total / days : reservation.car?.pricePerDay || 0;
     items = normalizeItems([{
-      description: `Наем на автомобил ${reservation.car?.brand || ''} ${reservation.car?.model || ''} (${fmtDateBg(reservation.from)} → ${fmtDateBg(reservation.to)})`,
+      description: `Наем на автомобил ${reservation.car?.brand || ''} ${reservation.car?.model || ''}`.trim(),
       qty: days,
       unitPrice,
       vatRate: 20
@@ -825,13 +924,51 @@ app.put('/api/company', async (req, res) => {
     mol: body.mol || null, email: body.email || null, phone: body.phone || null,
     bank: body.bank || null, iban: body.iban || null, bic: body.bic || null,
     proStart: body.proStart ? Number(body.proStart) : 1,
-    invStart: body.invStart ? Number(body.invStart) : 1
+    invStart: body.invStart ? Number(body.invStart) : 1,
+    extraDriverPrice: body.extraDriverPrice !== undefined ? Number(body.extraDriverPrice) : undefined,
+    insurancePrice: body.insurancePrice !== undefined ? Number(body.insurancePrice) : undefined,
+    smtpHost: body.smtpHost !== undefined ? (body.smtpHost || null) : undefined,
+    smtpPort: body.smtpPort !== undefined ? (Number(body.smtpPort) || 587) : undefined,
+    smtpUser: body.smtpUser !== undefined ? (body.smtpUser || null) : undefined,
+    smtpPass: body.smtpPass !== undefined ? (body.smtpPass || null) : undefined,
+    smtpFrom: body.smtpFrom !== undefined ? (body.smtpFrom || null) : undefined
   };
   let saved;
   if (exists) saved = await prisma.companyInfo.update({ where: { id: exists.id }, data });
   else saved = await prisma.companyInfo.create({ data });
   await logAction(null, 'company.update', { id: saved.id });
   res.json(saved);
+});
+
+// Test SMTP connection
+app.post('/api/test-smtp', async (req, res) => {
+  const { smtpHost, smtpPort, smtpUser, smtpPass, smtpFrom } = req.body || {};
+  if (!smtpHost || !smtpUser || !smtpPass) {
+    return res.status(400).json({ error: 'Моля попълнете хост, потребител и парола' });
+  }
+  try {
+    const nodemailer = (await import('nodemailer')).default;
+    const transporter = nodemailer.createTransport({
+      host: smtpHost,
+      port: Number(smtpPort) || 587,
+      secure: Number(smtpPort) === 465,
+      auth: { user: smtpUser, pass: smtpPass },
+      tls: { rejectUnauthorized: false }
+    });
+    await transporter.verify();
+    // Send test email to the SMTP user
+    await transporter.sendMail({
+      from: `"Тест" <${smtpFrom || smtpUser}>`,
+      to: smtpUser,
+      subject: 'Тестов имейл от системата',
+      text: 'SMTP настройките работят коректно!',
+      html: '<p style="font-family:sans-serif;">✅ SMTP настройките работят коректно!</p>'
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[test-smtp]', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Policies
@@ -855,6 +992,136 @@ app.put('/api/policies/:slug', async (req, res) => {
   }
   await logAction(null, 'policy.update', { slug });
   res.json(saved);
+});
+
+// ─── Site Images (backgrounds, avatars, etc.) ──────────────────────
+const siteImgRoot = path.join(process.cwd(), 'uploads', 'site');
+fs.mkdirSync(siteImgRoot, { recursive: true });
+
+const siteImgUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, siteImgRoot),
+    filename: (req, file, cb) => {
+      // Save with original extension temporarily; will be converted to .jpg after upload
+      const key = req.params.key || 'unknown';
+      const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+      cb(null, `_tmp_${key}${ext}`);
+    }
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (req, file, cb) => {
+    if (/^image\/(jpeg|jpg|png|webp|avif)$/.test(file.mimetype)) cb(null, true);
+    else cb(new Error('Only JPEG, PNG, WebP and AVIF are allowed'));
+  }
+});
+
+// Site images meta: defines every manageable image slot
+const SITE_IMAGE_SLOTS = [
+  { key: 'hero-bg',        label: 'Начална страница — Хиро (фон)',       hint: '1920×800 px, 16:7',    usage: 'css-bg' },
+  { key: 'about-cars',     label: 'Начална страница — За нас (снимка)',   hint: '800×600 px, 4:3',      usage: 'img-tag' },
+  { key: 'cta-bg',         label: 'Начална страница — Бюлетин (фон)',     hint: '1920×600 px, 16:5',    usage: 'css-bg' },
+  { key: 'about-hero-bg',  label: 'За нас — Хиро (фон)',                  hint: '1920×500 px, ~4:1',    usage: 'css-bg' },
+  { key: 'about-video',    label: 'За нас — Видео секция (снимка)',        hint: '1200×525 px, 16:7',    usage: 'img-tag' },
+  { key: 'memories-family', label: 'За нас — Спомени (снимка)',            hint: '800×600 px, 4:3',      usage: 'img-tag' },
+  { key: 'face-georgi',    label: 'Ревю — Георги Димитров (аватар)',       hint: '96×96 px, 1:1',        usage: 'img-tag' },
+  { key: 'face-maria',     label: 'Ревю — Мария Иванова (аватар)',         hint: '96×96 px, 1:1',        usage: 'img-tag' },
+  { key: 'face-petar',     label: 'Ревю — Петър Стоянов (аватар)',         hint: '96×96 px, 1:1',        usage: 'img-tag' },
+];
+
+// List all site image slots + current file info
+app.get('/api/site-images', (req, res) => {
+  const result = SITE_IMAGE_SLOTS.map(slot => {
+    // Find existing file for this key (any extension)
+    const files = fs.readdirSync(siteImgRoot).filter(f => f.startsWith(slot.key + '.'));
+    const file = files[0] || null;
+    return {
+      ...slot,
+      currentUrl: file ? `/uploads/site/${file}` : null,
+      hasImage: !!file
+    };
+  });
+  res.json(result);
+});
+
+// Upload a site image for a specific key — always converts to JPEG
+app.post('/api/site-images/:key', siteImgUpload.single('image'), async (req, res) => {
+  const key = req.params.key;
+  const slot = SITE_IMAGE_SLOTS.find(s => s.key === key);
+  if (!slot) return res.status(400).json({ error: 'Invalid image key' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const finalName = `${key}.jpg`;
+  const finalPath = path.join(siteImgRoot, finalName);
+
+  try {
+    // Convert any format (PNG, WebP, AVIF, JPEG) to JPEG with white background for transparency
+    await sharp(req.file.path)
+      .flatten({ background: '#ffffff' })
+      .jpeg({ quality: 90 })
+      .toFile(finalPath);
+
+    // Remove the temporary upload file
+    fs.unlinkSync(req.file.path);
+  } catch (e) {
+    // If conversion fails, just rename the temp file
+    console.error('Sharp conversion failed, using original:', e.message);
+    if (fs.existsSync(req.file.path)) {
+      fs.renameSync(req.file.path, finalPath);
+    }
+  }
+
+  // Remove old files for this key with other extensions (png, webp, etc.)
+  const oldFiles = fs.readdirSync(siteImgRoot).filter(f => f.startsWith(key + '.') && f !== finalName);
+  for (const old of oldFiles) {
+    try { fs.unlinkSync(path.join(siteImgRoot, old)); } catch {}
+  }
+
+  // Copy to frontend root for CSS background-image references
+  const frontendDir = path.resolve(__dirname, '..', '..');
+  const frontendDest = path.join(frontendDir, finalName);
+  fs.copyFileSync(finalPath, frontendDest);
+
+  // Remove old frontend files with different extensions
+  const oldFrontend = fs.readdirSync(frontendDir).filter(f => f.startsWith(key + '.') && f !== finalName && /\.(jpg|jpeg|png|webp|avif)$/i.test(f));
+  for (const old of oldFrontend) {
+    try { fs.unlinkSync(path.join(frontendDir, old)); } catch {}
+  }
+
+  await logAction(null, 'site-image.upload', { key });
+  res.json({ key, url: `/uploads/site/${finalName}` });
+});
+
+// ─── Newsletter ────────────────────────────────────────────────────
+app.post('/api/newsletter', async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || typeof email !== 'string') {
+    return res.status(400).json({ error: 'Моля, въведете имейл адрес.' });
+  }
+  const trimmed = email.trim().toLowerCase();
+  // Basic email regex
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+    return res.status(400).json({ error: 'Моля, въведете валиден имейл адрес.' });
+  }
+  // Check uniqueness
+  const existing = await prisma.newsletter.findUnique({ where: { email: trimmed } });
+  if (existing) {
+    return res.status(409).json({ error: 'Този имейл вече е абониран.' });
+  }
+  const record = await prisma.newsletter.create({ data: { email: trimmed } });
+  await logAction(null, 'newsletter.subscribe', { email: trimmed });
+  res.status(201).json({ ok: true, id: record.id });
+});
+
+app.get('/api/newsletter', async (req, res) => {
+  const list = await prisma.newsletter.findMany({ orderBy: { createdAt: 'desc' } });
+  res.json(list);
+});
+
+app.delete('/api/newsletter/:id', async (req, res) => {
+  const existing = await prisma.newsletter.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+  await prisma.newsletter.delete({ where: { id: req.params.id } });
+  res.status(204).end();
 });
 
 // ─── Serve static frontend in production ───────────────────────────

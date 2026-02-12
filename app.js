@@ -562,6 +562,22 @@
         images: Array.isArray(c.images) ? c.images : [],
         status: c.status === 'SERVICE' ? 'в сервиз' : c.status === 'RESERVED' ? 'резервиран' : 'наличен'
       };
+      // Enrich with dynamic params if missing
+      try {
+        const params = await fetch(`${API_BASE}/api/cars/${id}/params`, { headers: { accept: 'application/json' }, cache: 'no-store' }).then(r => r.ok ? r.json() : []);
+        if (!car.seats) {
+          const seatsP = params.find(p => /места|седалки|seat/i.test(p.name));
+          if (seatsP && seatsP.value) car.seats = Number(seatsP.value) || seatsP.value;
+        }
+        if (!car.transmission || car.transmission === '') {
+          const txP = params.find(p => /скоростна|кутия|transmission|gear/i.test(p.name));
+          if (txP && txP.value) car.transmission = displayVal(txP.value);
+        }
+        if (!car.fuel || car.fuel === '') {
+          const fuelP = params.find(p => /гориво|fuel|бензин|дизел/i.test(p.name));
+          if (fuelP && fuelP.value) car.fuel = displayVal(fuelP.value);
+        }
+      } catch {}
       return car;
     } catch (e) { console.error(e); return null; }
   }
@@ -570,15 +586,24 @@
       try { items = JSON.parse(items); } catch { items = []; }
     }
     if (!Array.isArray(items)) return [];
+    /* Strip legacy parenthetical date/qty suffixes from stored descriptions */
+    const cleanDesc = (d) => {
+      if (!d) return d;
+      // "(12.02.2026 г. → 19.02.2026 г.)" or "(12-02-2026 → 19-02-2026)"
+      d = d.replace(/\s*\(\d{2}[\.\-]\d{2}[\.\-]\d{4}\s*г?\.?\s*→\s*\d{2}[\.\-]\d{2}[\.\-]\d{4}\s*г?\.?\s*\)$/, '');
+      // "(7 дни × €10.00/ден)" or "(7 дни)"
+      d = d.replace(/\s*\(\d+\s*дни?\s*(?:[×x]\s*€?\d+[\.,]?\d*\/ден)?\)$/, '');
+      return d.trim();
+    };
     return items.map(it => {
       const qty = Number(it.qty ?? 1);
-      const unitPrice = Number(it.unitPrice ?? 0);
+      const unitPrice = Number(it.unitPrice ?? 0); // цена С ДДС
       const vatRate = Number(it.vatRate ?? 20);
-      const totalNet = qty * unitPrice;
-      const totalVat = totalNet * (vatRate / 100);
-      const totalGross = totalNet + totalVat;
+      const totalGross = qty * unitPrice; // обща сума С ДДС
+      const totalNet = totalGross / (1 + vatRate / 100); // обща сума БЕЗ ДДС
+      const totalVat = totalGross - totalNet; // сума на ДДС
       return {
-        description: it.description || 'Услуга',
+        description: cleanDesc(it.description) || 'Услуга',
         qty,
         unitPrice,
         vatRate,
@@ -594,6 +619,238 @@
     const total = items.reduce((s, it) => s + (it.totalGross || 0), 0);
     return { subtotal, vatAmount, total };
   }
+  /**
+   * Builds a full standalone HTML document for a proforma/invoice,
+   * identical to the admin printInvoice design. Used both in wizard step 6
+   * and in the admin invoice viewer.
+   */
+  function buildProformaStandaloneHTML({ reservation, invoice, company }) {
+    const days = (() => {
+      const a = new Date(reservation.from), b = new Date(reservation.to);
+      return Math.max(1, Math.ceil((b - a) / 86400000));
+    })();
+    const resTotal = Number(reservation.total || invoice?.total || 0);
+    const baseUnit = resTotal && days ? (resTotal / days) : (reservation.car?.pricePerDay || 0);
+    let items = normalizeInvoiceItems(invoice?.items || []);
+    const needsDefault = !items.length || calcInvoiceTotals(items).total === 0;
+    if (needsDefault) {
+      items = normalizeInvoiceItems([{
+        description: `Наем на автомобил ${reservation.car?.brand||''} ${reservation.car?.model||''}`.trim(),
+        qty: days, unitPrice: baseUnit, vatRate: 20
+      }]);
+    }
+    const totals = calcInvoiceTotals(items);
+    const sup = {
+      name: invoice?.supplierName || company?.name || '',
+      eik: invoice?.supplierEik || company?.eik || '',
+      vat: invoice?.supplierVat || company?.vat || '',
+      mol: invoice?.supplierMol || company?.mol || '',
+      addr: invoice?.supplierAddr || company?.address || '',
+      email: invoice?.supplierEmail || company?.email || '',
+      phone: invoice?.supplierPhone || company?.phone || '',
+      bank: invoice?.supplierBank || company?.bank || '',
+      iban: invoice?.supplierIban || company?.iban || '',
+      bic: invoice?.supplierBic || company?.bic || ''
+    };
+    const payload = {
+      type: invoice?.type || 'PROFORMA',
+      number: invoice?.number || '',
+      issueDate: invoice?.issueDate ? invoice.issueDate.slice(0,10) : '',
+      dueDate: invoice?.dueDate ? invoice.dueDate.slice(0,10) : '',
+      currency: invoice?.currency || 'EUR',
+      paymentMethod: invoice?.paymentMethod || '',
+      paymentTerms: invoice?.paymentTerms || '',
+      buyerType: invoice?.buyerType || reservation.invoiceType || 'individual',
+      buyerName: invoice?.buyerName || reservation.invoiceName || reservation.driverName || '',
+      buyerEik: invoice?.buyerEik || reservation.invoiceNum || '',
+      buyerVat: invoice?.buyerVat || reservation.invoiceVat || '',
+      buyerEgn: invoice?.buyerEgn || reservation.invoiceEgn || '',
+      buyerMol: invoice?.buyerMol || reservation.invoiceMol || '',
+      buyerAddr: invoice?.buyerAddr || reservation.invoiceAddr || '',
+      buyerEmail: invoice?.buyerEmail || reservation.invoiceEmail || '',
+      buyerBank: invoice?.buyerBank || reservation.invoiceBank || '',
+      buyerIban: invoice?.buyerIban || reservation.invoiceIban || '',
+      buyerBic: invoice?.buyerBic || reservation.invoiceBic || '',
+    };
+    const fmtMoney = (v) => `\u20AC${Number(v || 0).toFixed(2)}`;
+    const fmtDateShort = (d) => {
+      if (!d) return '';
+      const dt = new Date(d);
+      if (isNaN(dt)) return d;
+      return `${String(dt.getDate()).padStart(2,'0')}.${String(dt.getMonth()+1).padStart(2,'0')}.${dt.getFullYear()}`;
+    };
+    const rows = items.map(it => `
+      <tr>
+        <td>
+          <div class="desc">${escHtml(it.description)}</div>
+          <div class="meta">${reservation.from ? fmtDate(reservation.from) : ''}${reservation.to ? ' \u2192 ' + fmtDate(reservation.to) : ''}</div>
+        </td>
+        <td class="center">${escHtml(it.qty)}</td>
+        <td class="num">${fmtMoney(it.unitPrice)}</td>
+        <td class="center">${escHtml(it.vatRate)}%</td>
+        <td class="num">${fmtMoney(it.totalNet)}</td>
+        <td class="num">${fmtMoney(it.totalVat)}</td>
+        <td class="num">${fmtMoney(it.totalGross)}</td>
+      </tr>
+    `).join('');
+    // Policies
+    const POLICY_SECTIONS = getPolicySections();
+    const polTerms = POLICY_SECTIONS.find(s => s.slug === 'terms');
+    const polCancel = POLICY_SECTIONS.find(s => s.slug === 'cancellation');
+    const polInsurance = POLICY_SECTIONS.find(s => s.slug === 'insurance');
+    const replPol = (t) => (t || '')
+      .replace(/\{\{company_name\}\}/g, escHtml(sup.name))
+      .replace(/\{\{company_eik\}\}/g, escHtml(sup.eik))
+      .replace(/\{\{company_address\}\}/g, escHtml(sup.addr))
+      .replace(/\{\{company_email\}\}/g, escHtml(sup.email))
+      .replace(/\{\{company_phone\}\}/g, escHtml(sup.phone))
+      .replace(/\{\{company_phone_clean\}\}/g, (sup.phone||'').replace(/\s/g,''))
+      .replace(/\{\{extra_driver_price\}\}/g, Number(company?.extraDriverPrice ?? 10).toFixed(2))
+      .replace(/\{\{insurance_price\}\}/g, Number(company?.insurancePrice ?? 15).toFixed(2));
+
+    const invoiceBody = `
+        <div class="invoice-grid-header">
+          <div class="invoice-brand">
+            <div class="invoice-logo" aria-label="logo">${logoSVG}</div>
+            <div>
+              <div style="font-weight:700; font-size:16px;">${escHtml(sup.name || 'Company')}</div>
+            </div>
+          </div>
+          <div class="invoice-title">${payload.type==='INVOICE'?'ФАКТУРА':'ПРОФОРМА'}</div>
+          <div class="invoice-meta">
+            <div><span class="label">Номер</span><br><span class="value">${payload.number || '(генерира се)'}</span></div>
+            <div style="margin-top:6px;"><span class="label">Дата</span><br><span class="value">${fmtDateShort(payload.issueDate)}</span></div>
+            ${payload.dueDate ? `<div style="margin-top:6px;"><span class="label">Валиден до</span><br><span class="value">${fmtDateShort(payload.dueDate)}</span></div>` : ''}
+            <div style="margin-top:6px;"><span class="label">Валута</span><br><span class="value">${payload.currency}</span></div>
+          </div>
+        </div>
+
+        <div class="invoice-parties">
+          <div class="party-card">
+            <h4>Доставчик</h4>
+            <div class="name">${escHtml(sup.name)}</div>
+            <div class="party-row">ЕИК: ${escHtml(sup.eik || '—')} ${sup.vat ? ' | ДДС №: '+escHtml(sup.vat) : ''}</div>
+            <div class="party-row">МОЛ: ${escHtml(sup.mol || '—')}</div>
+            <div class="party-row">${escHtml(sup.addr || '—')}</div>
+            <div class="party-row">${escHtml(sup.email || '—')} | ${escHtml(sup.phone || '—')}</div>
+            <div class="party-row">Банка: ${escHtml(sup.bank || '—')}</div>
+            <div class="party-row">IBAN: ${escHtml(sup.iban || '—')} | BIC: ${escHtml(sup.bic || '—')}</div>
+          </div>
+          <div class="party-card">
+            <h4>Получател</h4>
+            <div class="name">${escHtml(payload.buyerName || '')}</div>
+            <div class="party-row">${payload.buyerType==='company'
+              ? `ЕИК: ${escHtml(payload.buyerEik || '—')} ${payload.buyerVat ? ' | ДДС №: '+escHtml(payload.buyerVat) : ''}`
+              : `ЕГН: ${escHtml(payload.buyerEgn || '—')}`}</div>
+            ${payload.buyerMol ? `<div class="party-row">МОЛ: ${escHtml(payload.buyerMol)}</div>` : ''}
+            <div class="party-row">${escHtml(payload.buyerAddr || '—')}</div>
+            <div class="party-row">${escHtml(payload.buyerEmail || '—')}</div>
+            ${(payload.buyerBank || payload.buyerIban || payload.buyerBic) ? `
+              <div class="party-row">Банка: ${escHtml(payload.buyerBank || '—')}</div>
+              <div class="party-row">IBAN: ${escHtml(payload.buyerIban || '—')} | BIC: ${escHtml(payload.buyerBic || '—')}</div>
+            ` : ''}
+          </div>
+        </div>
+
+        <div>
+          <table class="invoice-table">
+            <thead>
+              <tr>
+                <th style="width:40%;">Описание</th>
+                <th class="center" style="width:8%;">Кол-во</th>
+                <th class="num" style="width:12%;">Ед. цена (с ДДС)</th>
+                <th class="center" style="width:8%;">ДДС %</th>
+                <th class="num" style="width:12%;">Сума без ДДС</th>
+                <th class="num" style="width:10%;">ДДС</th>
+                <th class="num" style="width:10%;">Общо с ДДС</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+
+        <div class="invoice-totals">
+          <div class="row"><span>Данъчна основа (без ДДС)</span><span class="num">${fmtMoney(totals.subtotal)}</span></div>
+          <div class="row" style="padding-bottom:8px; border-bottom:1px solid #D1D5DB;"><span>ДДС (20%)</span><span class="num">${fmtMoney(totals.vatAmount)}</span></div>
+          <div class="invoice-total-final"><span>Общо (с ДДС)</span><span class="amount">${fmtMoney(totals.total)}</span></div>
+        </div>
+
+        <div class="invoice-footer">
+          <span>Генерирана от системата на ${fmtDate(new Date().toISOString())}</span>
+          <span>${payload.paymentMethod ? 'Начин на плащане: '+payload.paymentMethod : ''} ${payload.paymentTerms ? 'Условия: '+payload.paymentTerms : ''}</span>
+        </div>
+    `;
+    const policyPages = `
+      <div class="inv-policy-page">
+        <h3 class="inv-policy-title">${escHtml(polTerms?.title || 'Условия за ползване')}</h3>
+        <div class="inv-policy-body">${replPol(polTerms?.defaultContent || '')}</div>
+      </div>
+      <div class="inv-policy-page">
+        <h3 class="inv-policy-title">${escHtml(polCancel?.title || 'Политика за анулиране')}</h3>
+        <div class="inv-policy-body">${replPol(polCancel?.defaultContent || '')}</div>
+      </div>
+      <div class="inv-policy-page">
+        <h3 class="inv-policy-title">${escHtml(polInsurance?.title || 'Застраховки')}</h3>
+        <div class="inv-policy-body">${replPol(polInsurance?.defaultContent || '')}</div>
+      </div>
+    `;
+    const docTitle = (payload.type==='INVOICE'?'Фактура':'Проформа') + ' ' + (payload.number || '');
+    const selfCSS = `
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111827;font-size:13px;line-height:1.5;font-variant-numeric:tabular-nums;}
+.invoice-shell{background:#fff;padding:28px 32px;display:grid;gap:24px;max-width:210mm;margin:0 auto;}
+.invoice-grid-header{display:grid;grid-template-columns:1fr auto auto;gap:16px;align-items:center;}
+.invoice-brand{display:flex;align-items:center;gap:12px;}
+.invoice-logo{width:48px;height:48px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.invoice-logo svg{width:48px;height:48px;}
+.invoice-title{text-align:center;font-size:26px;font-weight:800;color:#1E3A8A;letter-spacing:.3px;}
+.invoice-meta{background:#F3F4F6;border:2px solid #2563EB;border-radius:10px;padding:12px 14px;min-width:200px;}
+.invoice-meta .label{font-size:11px;color:#6B7280;font-weight:600;}
+.invoice-meta .value{font-size:14px;font-weight:700;color:#111827;}
+.invoice-parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.party-card{border:1px solid #E5E7EB;border-radius:10px;padding:16px;background:#FAFAFA;}
+.party-card h4{margin:0 0 10px 0;font-size:12px;letter-spacing:.5px;text-transform:uppercase;color:#6B7280;border-bottom:2px solid #2563EB;padding-bottom:6px;}
+.party-card .name{font-size:16px;font-weight:700;color:#111827;margin-bottom:8px;}
+.party-row{margin:4px 0;color:#111827;font-size:13px;line-height:1.5;}
+.invoice-table{width:100%;border-collapse:collapse;font-size:12px;}
+.invoice-table thead th{background:#1E3A8A;color:#fff;padding:12px 14px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;text-align:left;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+.invoice-table thead th.num{text-align:right;}
+.invoice-table tbody td{padding:12px 14px;border-bottom:1px solid #E5E7EB;vertical-align:top;}
+.invoice-table tbody tr:nth-child(even){background:#F9FAFB;}
+.invoice-table .desc{font-weight:700;font-size:13px;}
+.invoice-table .meta{color:#6B7280;font-size:11px;margin-top:4px;}
+.num{text-align:right;}
+.center{text-align:center;}
+.invoice-totals{margin-left:auto;width:480px;max-width:100%;border:2px solid #E5E7EB;border-radius:10px;padding:16px;background:linear-gradient(180deg,#FAFAFA 0%,#FFFFFF 100%);display:grid;gap:8px;}
+.invoice-totals .row{display:grid;grid-template-columns:1fr auto;gap:12px;font-size:13px;color:#374151;}
+.invoice-totals .row strong{font-size:14px;}
+.invoice-total-final{background:#1E3A8A;color:#fff;padding:14px 16px;border-radius:8px;display:grid;grid-template-columns:1fr auto;align-items:center;font-weight:800;font-size:18px;box-shadow:0 4px 12px rgba(30,64,175,.3);-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+.invoice-total-final .amount{font-size:22px;}
+.invoice-footer{border-top:2px solid #E5E7EB;padding-top:12px;font-size:10px;color:#6B7280;display:flex;justify-content:space-between;gap:8px;}
+.inv-policy-page{border-top:2px solid #E5E7EB;padding-top:20px;margin-top:24px;page-break-before:always;}
+.inv-policy-title{color:#1E3A8A;font-size:18px;font-weight:700;border-bottom:2px solid #2563EB;padding-bottom:6px;margin:0 0 12px 0;}
+.inv-policy-body{font-size:12px;line-height:1.6;color:#374151;}
+.inv-policy-body h3{font-size:13px;font-weight:700;color:#1E3A8A;margin:14px 0 6px;}
+.inv-policy-body ul{padding-left:18px;margin:6px 0;}
+.inv-policy-body li{margin:3px 0;}
+.inv-policy-body p{margin:6px 0;}
+.inv-policy-body table{width:100%;border-collapse:collapse;font-size:11px;margin:8px 0;}
+.inv-policy-body table th,.inv-policy-body table td{border:1px solid #D1D5DB;padding:6px 8px;text-align:left;}
+.inv-policy-body table th{background:#F3F4F6;font-weight:600;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+.logo-car-svg rect{fill:#111827;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+@page{size:A4;margin:14mm 16mm;}
+@media print{
+  body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .invoice-shell{padding:0;max-width:none;}
+  .invoice-grid-header,.invoice-parties,.party-card,.invoice-totals,.invoice-total-final{break-inside:avoid;}
+  .inv-policy-page{page-break-before:always;margin-top:0;border-top:none;padding-top:0;}
+}`;
+    const fullHTML = '<!DOCTYPE html><html lang="bg"><head><meta charset="utf-8"><title>'
+      + escHtml(docTitle) + '</title><style>' + selfCSS + '</style></head><body><div class="invoice-shell">'
+      + invoiceBody + policyPages + '</div></body></html>';
+    return fullHTML;
+  }
+
   async function fetchCarsFromApi() {
     try {
       const res = await fetch(`${API_BASE}/api/cars`, { headers: { accept: 'application/json' }, cache: 'no-store' });
@@ -616,6 +873,24 @@
         images: Array.isArray(c.images) ? c.images : [],
         status: c.status === 'SERVICE' ? 'в сервиз' : c.status === 'RESERVED' ? 'резервиран' : 'наличен',
         favorite: false
+      }));
+      // Enrich with dynamic params (seats, etc.) if missing from car fields
+      await Promise.all(list.map(async (car) => {
+        try {
+          const params = await fetch(`${API_BASE}/api/cars/${car.id}/params`, { headers: { accept: 'application/json' }, cache: 'no-store' }).then(r => r.ok ? r.json() : []);
+          if (!car.seats) {
+            const seatsP = params.find(p => /места|седалки|seat/i.test(p.name));
+            if (seatsP && seatsP.value) car.seats = Number(seatsP.value) || seatsP.value;
+          }
+          if (!car.transmission || car.transmission === '') {
+            const txP = params.find(p => /скоростна|кутия|transmission|gear/i.test(p.name));
+            if (txP && txP.value) car.transmission = displayVal(txP.value);
+          }
+          if (!car.fuel || car.fuel === '') {
+            const fuelP = params.find(p => /гориво|fuel|бензин|дизел/i.test(p.name));
+            if (fuelP && fuelP.value) car.fuel = displayVal(fuelP.value);
+          }
+        } catch {}
       }));
       return list;
     } catch {
@@ -872,7 +1147,7 @@
       <!-- ABOUT -->
       <section class="about-section" id="about">
         <div class="about-inner">
-          <div class="about-img"><img src="about-cars.jpg" alt="Паркинг с луксозни автомобили под наем" loading="lazy"></div>
+          <div class="about-img"><img src="/uploads/site/about-cars.jpg" onerror="this.src='about-cars.jpg'" alt="Паркинг с луксозни автомобили под наем" loading="lazy"></div>
           <div class="about-points">
             <div class="about-point"><div class="about-bullet">${svgCheck}</div><div><h4>Бърза резервация</h4><p>Резервирайте кола за минути с нашата лесна онлайн система.</p></div></div>
             <div class="about-point"><div class="about-bullet">${svgCheck}</div><div><h4>Гъвкави условия</h4><p>Без скрити такси. Безплатна отмяна до 24 часа преди взимане.</p></div></div>
@@ -912,15 +1187,53 @@
         <div class="cta-form">
           <label for="ctaEmail" class="sr-only">Вашият имейл</label>
           <input id="ctaEmail" type="email" placeholder="Вашият имейл" autocomplete="email" aria-label="Имейл адрес за бюлетин">
-          <button type="button" aria-label="Абонирай се за бюлетина">Абонирай се сега</button>
+          <button id="ctaSubBtn" type="button" aria-label="Абонирай се за бюлетина">Абонирай се сега</button>
         </div>
+        <div id="ctaMsg" class="cta-msg" aria-live="polite"></div>
       </section>
 
       ${siteFooterHTML()}
       <section class="panel details" id="details" style="display:none;"></section>
     `;
     bindHamburger();
+    bindNewsletter();
   }
+
+  /* ── Newsletter subscription handler ── */
+  function bindNewsletter() {
+    const btn = $('#ctaSubBtn');
+    const input = $('#ctaEmail');
+    const msgEl = $('#ctaMsg');
+    if (!btn || !input || !msgEl) return;
+    function showMsg(text, type) {
+      msgEl.textContent = text;
+      msgEl.className = 'cta-msg ' + (type === 'ok' ? 'cta-msg-ok' : type === 'err' ? 'cta-msg-err' : '');
+    }
+    btn.addEventListener('click', async () => {
+      msgEl.textContent = '';
+      msgEl.className = 'cta-msg';
+      const email = input.value.trim();
+      if (!email) { showMsg('Моля, въведете имейл адрес.', 'err'); input.focus(); return; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { showMsg('Моля, въведете валиден имейл адрес.', 'err'); input.focus(); return; }
+      btn.disabled = true;
+      btn.textContent = 'Изпращане...';
+      try {
+        await apiFetch('/api/newsletter', { method: 'POST', body: JSON.stringify({ email }) });
+        showMsg('Успешно се абонирахте! Благодарим ви!', 'ok');
+        input.value = '';
+      } catch (e) {
+        const msg = e.message || '';
+        if (msg.includes('вече е абониран')) showMsg('Този имейл вече е абониран.', 'err');
+        else if (msg.includes('валиден')) showMsg('Моля, въведете валиден имейл адрес.', 'err');
+        else showMsg(msg || 'Възникна грешка. Опитайте отново.', 'err');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Абонирай се сега';
+      }
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
+  }
+
   function mountAdminLayout() {
     app.className = 'landing-wrap';
     app.innerHTML = `
@@ -1198,13 +1511,13 @@
         </div>
       `;
       grid.appendChild(card);
-      // Render specs directly from car fields (no extra API calls)
+      // Render specs directly from car fields: transmission, seats, fuel
       const specsEl = document.getElementById(`specs-${c.id}`);
       if (specsEl) {
         const specs = [];
-        if (c.transmission) specs.push({ icon: gearIcon(), text: c.transmission });
-        if (c.fuel) specs.push({ icon: fuelIcon(), text: c.fuel });
+        if (c.transmission) specs.push({ icon: gearIcon(), text: displayVal(c.transmission) });
         if (c.seats) specs.push({ icon: seatIcon(), text: c.seats + ' места' });
+        if (c.fuel) specs.push({ icon: fuelIcon(), text: displayVal(c.fuel) });
         specsEl.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${escHtml(String(s.text))}</span></div>`).join('');
       }
       const availability = (() => {
@@ -1560,10 +1873,10 @@
           <label class="switch"><input id="extraTime" type="checkbox"><span>Включи</span></label>
         </div>
         <div class="summary">
-          <div class="row"><div>Ставка</div><div id="rateVal">$${car.pricePerHour}/h</div></div>
-          <div class="row"><div>Застраховка</div><div id="insVal">$0.00</div></div>
-          <div class="row"><div>Данъци</div><div id="taxVal">$0.00</div></div>
-          <div class="row" style="font-weight:700;"><div>Крайна сума</div><div id="totalVal">$0.00</div></div>
+          <div class="row"><div>Ставка (с ДДС)</div><div id="rateVal">€${car.pricePerDay}/ден</div></div>
+          <div class="row"><div>Застраховка</div><div id="insVal">€0.00</div></div>
+          <div class="row"><div>ДДС 20% (вкл. в цената)</div><div id="taxVal">€0.00</div></div>
+          <div class="row" style="font-weight:700;"><div>Крайна сума</div><div id="totalVal">€0.00</div></div>
           <div class="row" style="gap:8px;margin-top:6px;">
             <button class="btn-primary" id="bookBtn" style="flex:1;">Проверка на наличност</button>
             <button class="btn-secondary" style="width:180px;">Резервирай безплатно • 10 мин</button>
@@ -1592,13 +1905,13 @@
     function daysBetween(a,b) { const ms = new Date(b) - new Date(a); return Math.max(1, Math.ceil(ms / 86400000)); }
     function recalc() {
       const d = daysBetween(pickup.value, dropoff.value);
-      const base = d * rate;
+      const base = d * rate; // цената вече е с ДДС
       const insVal = Number(ins.value || 0);
-      const tax = base * 0.162; // simple sample rate ~16.2%
+      const vatInBase = base - (base / 1.20); // ДДС, включен в цената (20%)
       $('#rateVal').textContent = `€${base.toFixed(2)} (${d} дни @ €${rate}/ден)`;
       $('#insVal').textContent = formatMoney(insVal);
-      $('#taxVal').textContent = formatMoney(tax);
-      $('#totalVal').textContent = formatMoney(base + insVal + tax);
+      $('#taxVal').textContent = `€${vatInBase.toFixed(2)} (вкл. в цената)`;
+      $('#totalVal').textContent = formatMoney(base + insVal);
     }
     [ins, pickup, dropoff, extra].forEach(el => el.addEventListener('change', recalc));
     recalc();
@@ -1647,6 +1960,9 @@
       to: paramsUrl.get('to') ?? filterState.to ?? '',
       driver: existing.driver || {},
       invoice: existing.invoice || { type: 'individual' },
+      extraDriver: existing.extraDriver || false,
+      insurance: existing.insurance || false,
+      termsAccepted: existing.termsAccepted || false,
       status: 'pending'
     };
     let draft = { ...existing, ...baseDraft };
@@ -1670,7 +1986,7 @@
       navigate(`#/reserve?${q}`);
     };
 
-    const stepLabels = ['Кола & дати', 'Шофьор', 'Фактура', 'Потвърждение'];
+    const stepLabels = ['Кола & дати', 'Шофьор', 'Допълнения', 'Фактура', 'Условия', 'Потвърждение'];
     const stepper = `
       <div class="wz-stepper">
         ${stepLabels.map((label, i) => {
@@ -1756,9 +2072,48 @@
       </section>
     `;
 
-    const inv = draft.invoice || { type: 'individual' };
+    // ─── Step 3: Допълнения (extras) ───
+    const extDriverPrice = Number(companyInfo?.extraDriverPrice ?? 10);
+    const extInsurancePrice = Number(companyInfo?.insurancePrice ?? 15);
+    const priceDay = Number(car?.pricePerDay || 0);
+    const fromTs2 = draft.from ? Date.parse(draft.from) : null;
+    const toTs2 = draft.to ? Date.parse(draft.to) : null;
+    const daysCalc = (fromTs2 && toTs2) ? Math.max(1, Math.ceil((toTs2 - fromTs2) / 86400000)) : 1;
     const block3 = `
       <section id="step3" class="wz-section">
+        <h3 class="wz-section-title">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#6366F1" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z"/></svg>
+          Допълнителни услуги
+        </h3>
+        <div class="wz-extras-list">
+          <label class="wz-extra-card" for="chkExtraDriver">
+            <div class="wz-extra-check"><input type="checkbox" id="chkExtraDriver" ${draft.extraDriver ? 'checked' : ''}></div>
+            <div class="wz-extra-info">
+              <div class="wz-extra-name">Допълнителен шофьор</div>
+              <div class="wz-extra-desc">Добавете втори шофьор към наема. Цената е за всеки ден от резервацията.</div>
+              <div class="wz-extra-price">€${extDriverPrice.toFixed(2)} / ден <span class="wz-extra-total">(${daysCalc} дни = €${(extDriverPrice * daysCalc).toFixed(2)})</span></div>
+            </div>
+          </label>
+          <label class="wz-extra-card" for="chkInsurance">
+            <div class="wz-extra-check"><input type="checkbox" id="chkInsurance" ${draft.insurance ? 'checked' : ''}></div>
+            <div class="wz-extra-info">
+              <div class="wz-extra-name">Пълно каско (Full Coverage)</div>
+              <div class="wz-extra-desc">Намалява самоучастието до €0 — пълно покритие за спокойствие по пътищата.</div>
+              <div class="wz-extra-price">€${extInsurancePrice.toFixed(2)} / ден <span class="wz-extra-total">(${daysCalc} дни = €${(extInsurancePrice * daysCalc).toFixed(2)})</span></div>
+            </div>
+          </label>
+        </div>
+        <div class="wz-extras-summary" id="extrasSummary"></div>
+        <div class="wz-actions wz-actions-between">
+          <button class="wz-btn-secondary" id="backToDriver">← Назад</button>
+          <button class="wz-btn-primary" id="nextToInvoice">Напред →</button>
+        </div>
+      </section>
+    `;
+
+    const inv = draft.invoice || { type: 'individual' };
+    const block4 = `
+      <section id="step4" class="wz-section">
         <h3 class="wz-section-title">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#6366F1" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 7L2 7"/></svg>
           Данни за фактура
@@ -1798,20 +2153,59 @@
           </div>
         </div>
         <div class="wz-actions wz-actions-between">
-          <button class="wz-btn-secondary" id="back2">← Назад</button>
-          <button class="wz-btn-primary" id="confirm">Резервирай</button>
+          <button class="wz-btn-secondary" id="backToExtras">← Назад</button>
+          <button class="wz-btn-primary" id="nextToTerms">Напред →</button>
         </div>
       </section>
     `;
 
-    const block4 = `
-      <section id="step4" class="wz-section wz-section-confirm">
+    // ─── Step 5: Приемане на условията ───
+    const block5 = `
+      <section id="step5" class="wz-section">
+        <h3 class="wz-section-title">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#6366F1" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Приемане на условия
+        </h3>
+        <div class="wz-terms-list">
+          <label class="wz-terms-item" for="chkTerms">
+            <input type="checkbox" id="chkTerms">
+            <span>Прочетох и приемам <a href="#/policies" target="_blank">Условията за ползване</a></span>
+          </label>
+          <label class="wz-terms-item" for="chkCancel">
+            <input type="checkbox" id="chkCancel">
+            <span>Прочетох и приемам <a href="#/policies" target="_blank">Политика за анулиране и възстановяване</a></span>
+          </label>
+          <label class="wz-terms-item" for="chkInsurancePol">
+            <input type="checkbox" id="chkInsurancePol">
+            <span>Прочетох и приемам <a href="#/policies" target="_blank">Застрахователните условия</a></span>
+          </label>
+          <label class="wz-terms-item" for="chkPrivacy">
+            <input type="checkbox" id="chkPrivacy">
+            <span>Прочетох и приемам <a href="#/policies" target="_blank">Политика за поверителност</a></span>
+          </label>
+        </div>
+        <div id="termsError" class="wz-terms-error" style="display:none;"></div>
+        <div class="wz-actions wz-actions-between">
+          <button class="wz-btn-secondary" id="backToInvoice">← Назад</button>
+          <button class="wz-btn-primary" id="confirm" disabled>Резервирай</button>
+        </div>
+      </section>
+    `;
+
+    const _resId = paramsUrl.get('id') || draft.id;
+    const block6 = `
+      <section id="step6" class="wz-section wz-section-confirm">
         <div class="wz-confirm-icon">
           <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="#10B981" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>
         </div>
         <h3 class="wz-confirm-title">Резервацията е изпратена!</h3>
-        <p class="wz-confirm-text">Вашата заявка № <strong>${paramsUrl.get('id') || draft.id}</strong> е получена и очаква одобрение.</p>
+        <p class="wz-confirm-text">Вашата заявка № <strong>${_resId}</strong> е получена и очаква одобрение.</p>
         <p class="wz-confirm-sub">Ще се свържем с вас съвсем скоро.</p>
+        <button id="downloadProformaPdf" class="btn-primary wz-download-pdf-btn" style="display:inline-flex; align-items:center; gap:8px; margin-top:20px; cursor:pointer; border:none;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Свали проформа (PDF)
+        </button>
+        <p id="pdfLoadingMsg" style="display:none; margin-top:10px; font-size:13px; color:#6B7280;">Зареждане на проформата...</p>
       </section>
     `;
 
@@ -1841,6 +2235,8 @@
       ${step === 2 ? block2 : ''}
       ${step === 3 ? block3 : ''}
       ${step === 4 ? block4 : ''}
+      ${step === 5 ? block5 : ''}
+      ${step === 6 ? block6 : ''}
     `;
 
     // Load car specs for badge (all steps) — use SVG icons like car listing cards
@@ -2069,13 +2465,39 @@
           license: res.values.license,
           birth: '', addr: ''
         };
-        gotoStep(3);
+        gotoStep(3); // → Допълнения
       });
       updateNextBtn();
     }
 
-    // Стъпка 3
+    // Стъпка 3: Допълнения
     if (step === 3) {
+      const updateSummary = () => {
+        const ed = $('#chkExtraDriver')?.checked;
+        const ins = $('#chkInsurance')?.checked;
+        const sum = $('#extrasSummary');
+        if (!sum) return;
+        let base = priceDay * daysCalc;
+        let lines = [`Наем: €${base.toFixed(2)}`];
+        if (ed) { const cost = extDriverPrice * daysCalc; base += cost; lines.push(`Доп. шофьор: €${cost.toFixed(2)}`); }
+        if (ins) { const cost = extInsurancePrice * daysCalc; base += cost; lines.push(`Пълно каско: €${cost.toFixed(2)}`); }
+        sum.innerHTML = `<div class="wz-extras-total"><strong>Обща сума: €${base.toFixed(2)}</strong> <span style="font-size:13px;color:#6B7280;">(с ДДС)</span></div>`;
+      };
+      updateSummary();
+      const toggleCardClass = (chk) => { if (chk) chk.closest('.wz-extra-card')?.classList.toggle('checked', chk.checked); };
+      $('#chkExtraDriver')?.addEventListener('change', () => { toggleCardClass($('#chkExtraDriver')); updateSummary(); });
+      $('#chkInsurance')?.addEventListener('change', () => { toggleCardClass($('#chkInsurance')); updateSummary(); });
+      toggleCardClass($('#chkExtraDriver')); toggleCardClass($('#chkInsurance'));
+      $('#backToDriver')?.addEventListener('click', () => gotoStep(2));
+      $('#nextToInvoice')?.addEventListener('click', () => {
+        draft.extraDriver = !!$('#chkExtraDriver')?.checked;
+        draft.insurance = !!$('#chkInsurance')?.checked;
+        gotoStep(4);
+      });
+    }
+
+    // Стъпка 4: Фактура
+    if (step === 4) {
       const invState = { ...(draft.invoice || {}), type: draft.invoice?.type === 'company' ? 'company' : 'individual' };
       const normSpaces = (v='') => v.replace(/\s+/g, ' ').trim();
       const setFieldState = (inputEl, res, showError) => {
@@ -2381,7 +2803,7 @@
 
       const updateConfirmBtn = () => {
         const res = validateInvoice(false);
-        const btn = $('#confirm');
+        const btn = $('#nextToTerms');
         if (btn) {
           btn.disabled = !res.ok;
           const errors = collectErrorMessages();
@@ -2402,9 +2824,9 @@
         r.closest('.wz-radio')?.classList.add('wz-radio-active');
         updateConfirmBtn();
       });
-      $('#back2')?.addEventListener('click', () => gotoStep(2));
-      $('#confirm')?.setAttribute('disabled','disabled');
-      $('#confirm')?.addEventListener('click', async () => {
+      $('#backToExtras')?.addEventListener('click', () => gotoStep(3));
+      $('#nextToTerms')?.setAttribute('disabled','disabled');
+      $('#nextToTerms')?.addEventListener('click', async () => {
         const res = validateInvoice(true);
         if (!res.ok) return;
         if (invState.type === 'company') {
@@ -2430,6 +2852,35 @@
             num: null, vat: null, mol: null, bank: null, iban: null, bic: null
           };
         }
+        // Save invoice data and go to terms acceptance
+        gotoStep(5);
+      });
+      updateConfirmBtn();
+    }
+
+    // Стъпка 5: Приемане на условия
+    if (step === 5) {
+      const allBoxes = ['#chkTerms','#chkCancel','#chkInsurancePol','#chkPrivacy'];
+      const updateTermsBtn = () => {
+        const allChecked = allBoxes.every(sel => $(sel)?.checked);
+        const btn = $('#confirm');
+        if (btn) btn.disabled = !allChecked;
+        const err = $('#termsError');
+        if (err) err.style.display = 'none';
+      };
+      allBoxes.forEach(sel => { $(sel)?.addEventListener('change', () => {
+        const el = $(sel); if (el) el.closest('.wz-terms-item')?.classList.toggle('checked', el.checked);
+        updateTermsBtn();
+      }); });
+      $('#backToInvoice')?.addEventListener('click', () => gotoStep(4));
+      $('#confirm')?.addEventListener('click', async () => {
+        const allChecked = allBoxes.every(sel => $(sel)?.checked);
+        if (!allChecked) {
+          const err = $('#termsError');
+          if (err) { err.textContent = 'Моля, приемете всички условия, за да продължите.'; err.style.display = 'block'; }
+          return;
+        }
+        draft.termsAccepted = true;
         draft.status = 'pending';
         const payload = {
           carId: car.id,
@@ -2437,23 +2888,55 @@
           to: draft.to || new Date(Date.now()+3*3600e3).toISOString(),
           pickPlace: draft.pick, dropPlace: draft.drop,
           driver: draft.driver, invoice: draft.invoice,
-          total: (function(){ const ms = new Date((draft.to||payload.to)) - new Date((draft.from||payload.from)); const days = Math.max(1, Math.ceil(ms/86400000)); return (car.pricePerDay||0) * days; })()
+          extraDriver: !!draft.extraDriver,
+          insurance: !!draft.insurance
         };
         try {
+          const btn = $('#confirm');
+          if (btn) { btn.disabled = true; btn.textContent = 'Изпращане...'; }
           const created = await apiFetch('/api/reservations', {
             method: 'POST',
             body: JSON.stringify(payload)
           });
           storage.set(draftKey, null);
-          gotoStep(4, { id: created?.id || draft.id });
+          gotoStep(6, { id: created?.id || draft.id });
         } catch {
           const saved = storage.get('cr_reservations', []);
           saved.push({ ...draft, createdAt: new Date().toISOString(), pricePerDay: car.pricePerDay });
           storage.set('cr_reservations', saved);
-          gotoStep(4, { id: draft.id });
+          gotoStep(6, { id: draft.id });
         }
       });
-      updateConfirmBtn();
+    }
+
+    // Step 6: PDF download button
+    if (step === 6) {
+      const pdfBtn = $('#downloadProformaPdf');
+      if (pdfBtn) pdfBtn.onclick = async () => {
+        const msg = $('#pdfLoadingMsg');
+        if (msg) msg.style.display = 'block';
+        pdfBtn.disabled = true;
+        // Open window synchronously so popup blockers don't interfere
+        const printWin = window.open('', '_blank', 'width=900,height=700');
+        try {
+          const reservation = await apiFetch(`/api/reservations/${_resId}`);
+          const invoices = reservation?.invoices || [];
+          const invoice = invoices.find(i => i.type === 'PROFORMA') || invoices[0] || null;
+          const company = companyInfo || (await apiFetch('/api/company'));
+          const fullHTML = buildProformaStandaloneHTML({ reservation, invoice, company });
+          if (printWin) {
+            printWin.document.write(fullHTML);
+            printWin.document.close();
+            printWin.onload = () => { printWin.focus(); printWin.print(); };
+          }
+        } catch (err) {
+          console.error('[proforma-pdf]', err);
+          if (printWin) printWin.close();
+          alert('Грешка при генериране на проформата. Моля опитайте отново.');
+        }
+        pdfBtn.disabled = false;
+        if (msg) msg.style.display = 'none';
+      };
     }
   }
 
@@ -2555,6 +3038,8 @@
           <a class="tag ${active==='reservations'?'':'pill'}" href="#/admin/reservations">Резервации</a>
           <a class="tag ${active==='invoices'?'':'pill'}" href="#/admin/invoices">Фактури</a>
           <a class="tag ${active==='policies'?'':'pill'}" href="#/admin/policies">Политики</a>
+          <a class="tag ${active==='images'?'':'pill'}" href="#/admin/images">Снимки</a>
+          <a class="tag ${active==='newsletter'?'':'pill'}" href="#/admin/newsletter">Бюлетин</a>
         </div>
       </div>
     `;
@@ -2582,7 +3067,7 @@
         <div class="panel" style="padding:14px;">
           <div class="section-title">Платени резервации (период)</div>
           <table class="table">
-            <thead><tr><th>№</th><th>Кола</th><th>Клиент</th><th>Сума</th><th>От</th><th>До</th></tr></thead>
+            <thead><tr><th>№</th><th>Кола</th><th>Клиент</th><th>Сума (с ДДС)</th><th>От</th><th>До</th></tr></thead>
             <tbody id="paidRows">
               <tr><td colspan="6">Зареждане...</td></tr>
             </tbody>
@@ -2632,7 +3117,7 @@
           <h2><a href="#/admin/reservations" style="color:inherit;text-decoration:none;">${declined}</a></h2>
         </div>
         <div class="panel" style="padding:14px;">
-          <div class="section-title">Оборот</div>
+          <div class="section-title">Оборот (с ДДС)</div>
           <h2><a href="#/admin/invoices" style="color:inherit;text-decoration:none;">€${turnover.toFixed(2)}</a></h2>
         </div>
       `;
@@ -2701,7 +3186,7 @@
           <div style="margin-left:auto;"></div>
         </div>
         <table class="table">
-          <thead><tr><th>Марка</th><th>Модел</th><th>Тип</th><th>Цена/ден (€)</th><th>Статус</th><th></th></tr></thead>
+          <thead><tr><th>Марка</th><th>Модел</th><th>Тип</th><th>Цена/ден с ДДС (€)</th><th>Статус</th><th></th></tr></thead>
           <tbody id="carRows"></tbody>
         </table>
       </div>
@@ -2776,7 +3261,7 @@
     function editCar(id) {
       const existing = cars.find(c => c.id === id);
       const car = existing || { id: uid(), brand:'', model:'', trim:'', pricePerDay:0, type:'', status:'наличен', images: [] };
-      const isNew = !existing;
+      let isNew = !existing;
       let _apiLoaded = isNew; // track whether we have raw API data (new cars don't need it)
       async function loadCarFromApi() {
         // Винаги зареждаме свежи данни от API (списъкът може да няма images и други полета)
@@ -2816,8 +3301,8 @@
             </div>
             <div class="grid-3">
               <div>
-                <div class="section-title">Цена на ден (€)</div>
-                <input id="cPriceDay" type="number" class="input" placeholder="€" value="${car.pricePerDay ?? ''}">
+                <div class="section-title">Цена на ден с ДДС (€)</div>
+                <input id="cPriceDay" type="number" class="input" placeholder="€ (с ДДС)" value="${car.pricePerDay ?? ''}">
               </div>
             </div>
             <div class="panel" style="padding:12px;">
@@ -2919,19 +3404,25 @@
         renderImages();
         // Upload handler
         $('#imgInput').onchange = async (e) => {
-          if (!car.id || isNew) {
-            // create car first
-            await saveBasics(true);
+          const saveBtn = $('#saveCar');
+          try {
+            if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Създаване...'; }
+            if (!car.id || isNew) {
+              // create car first
+              await saveBasics(true);
+            }
+            const files = Array.from(e.target.files || []);
+            if (!files.length) return;
+            const fd = new FormData();
+            files.forEach(f => fd.append('images', f));
+            await fetch(`${API_BASE}/api/cars/${car.id}/images`, { method: 'POST', body: fd }).then(r => r.json());
+            const fresh = await fetch(`${API_BASE}/api/cars/${car.id}`).then(r=>r.json());
+            car.images = fresh.images || [];
+            renderImages();
+            e.target.value = '';
+          } finally {
+            if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Запази'; }
           }
-          const files = Array.from(e.target.files || []);
-          if (!files.length) return;
-          const fd = new FormData();
-          files.forEach(f => fd.append('images', f));
-          await fetch(`${API_BASE}/api/cars/${car.id}/images`, { method: 'POST', body: fd }).then(r => r.json());
-          const fresh = await fetch(`${API_BASE}/api/cars/${car.id}`).then(r=>r.json());
-          car.images = fresh.images || [];
-          renderImages();
-          e.target.value = '';
         };
         // Parameters form
         const pGrid = $('#paramGrid');
@@ -2945,20 +3436,37 @@
             return `<div><div class="section-title">${d.name}</div><input class="input" value="${d.value??''}" data-param="${d.id}" data-type="TEXT"></div>`;
           }
         }).join('');
+        let _creatingPromise = null;
         async function saveBasics(creating=false) {
+          // If a creation is already in progress, wait for it to finish first
+          // This prevents race conditions between image upload and save button
+          if (_creatingPromise) {
+            await _creatingPromise;
+          }
           Object.assign(car, {
             brand: $('#cBrand').value, model: $('#cModel').value,
             pricePerDay: $('#cPriceDay').value !== '' ? Number($('#cPriceDay').value) : null,
             status: $('#cStatus').value
           });
           if (creating && isNew) {
-            const created = await apiFetch('/api/cars', { method: 'POST', body: JSON.stringify(car) });
-            car.id = created.id;
-          } else {
+            _creatingPromise = (async () => {
+              const created = await apiFetch('/api/cars', { method: 'POST', body: JSON.stringify(car) });
+              car.id = created.id;
+              isNew = false;
+            })();
+            try {
+              await _creatingPromise;
+            } finally {
+              _creatingPromise = null;
+            }
+          } else if (car.id && !isNew) {
             await apiFetch(`/api/cars/${car.id}`, { method: 'PUT', body: JSON.stringify(car) });
           }
         }
+        let _saving = false;
         $('#saveCar').onclick = async () => {
+          if (_saving) return; // Prevent double-click
+          _saving = true;
           const btn = $('#saveCar');
           btn.disabled = true; const prevText = btn.textContent; btn.textContent = 'Запис...';
           try {
@@ -3002,6 +3510,7 @@
           } catch (e) {
             alert(e.message || 'Грешка при запис.');
           } finally {
+            _saving = false;
             btn.disabled = false; btn.textContent = prevText;
           }
         };
@@ -3142,7 +3651,7 @@
               <th>Клиент</th>
               <th>Период</th>
               <th>Дни</th>
-              <th>Обща сума</th>
+              <th>Сума (с ДДС)</th>
               <th>Фактури</th>
               <th>Статус</th>
             </tr>
@@ -3459,7 +3968,7 @@
       const needsDefault = !items.length || calcInvoiceTotals(items).total === 0;
       if (needsDefault) {
         items = normalizeInvoiceItems([{
-          description: `Наем на автомобил ${reservation.car?.brand||''} ${reservation.car?.model||''} (${fmtDate(new Date(reservation.from))} → ${fmtDate(new Date(reservation.to))})`,
+          description: `Наем на автомобил ${reservation.car?.brand||''} ${reservation.car?.model||''}`.trim(),
           qty: days,
           unitPrice: baseUnit,
           vatRate: 20
@@ -3521,18 +4030,27 @@
           <td class="num">${fmtMoney(it.totalGross)}</td>
         </tr>
       `).join('');
-      const html = `
-        <div class="invoice-shell">
-          <div style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:-8px;">
-            <button class="btn-secondary" id="editInvView" style="height:34px; display:flex; align-items:center; gap:6px; padding:0 12px;">✏️ Редактирай</button>
-            <button class="btn-secondary" id="printInvView" style="height:34px; display:flex; align-items:center; gap:6px; padding:0 12px;">🖨️ Принтирай / PDF</button>
-          </div>
+      // Политики за печат
+      const POLICY_SECTIONS = getPolicySections();
+      const polTerms = POLICY_SECTIONS.find(s => s.slug === 'terms');
+      const polCancel = POLICY_SECTIONS.find(s => s.slug === 'cancellation');
+      const polInsurance = POLICY_SECTIONS.find(s => s.slug === 'insurance');
+      const replPol = (t) => (t || '')
+        .replace(/\{\{company_name\}\}/g, escHtml(sup.name))
+        .replace(/\{\{company_eik\}\}/g, escHtml(sup.eik))
+        .replace(/\{\{company_address\}\}/g, escHtml(sup.addr))
+        .replace(/\{\{company_email\}\}/g, escHtml(sup.email))
+        .replace(/\{\{company_phone\}\}/g, escHtml(sup.phone))
+        .replace(/\{\{company_phone_clean\}\}/g, (sup.phone||'').replace(/\s/g,''))
+        .replace(/\{\{extra_driver_price\}\}/g, Number(companyCache?.extraDriverPrice ?? 10).toFixed(2))
+        .replace(/\{\{insurance_price\}\}/g, Number(companyCache?.insurancePrice ?? 15).toFixed(2));
+
+      const invoiceBody = `
           <div class="invoice-grid-header">
             <div class="invoice-brand">
-              <div class="invoice-logo" aria-label="logo">🚗</div>
+              <div class="invoice-logo" aria-label="logo">${logoSVG}</div>
               <div>
                 <div style="font-weight:700; font-size:16px;">${escHtml(sup.name || 'Company')}</div>
-                <div style="color:#6B7280; font-size:12px;">${escHtml(sup.email || '')}</div>
               </div>
             </div>
             <div class="invoice-title">${payload.type==='INVOICE'?'ФАКТУРА':'ПРОФОРМА'}</div>
@@ -3544,32 +4062,29 @@
             </div>
           </div>
 
-          <div class="invoice-reason">ℹ️ Основание: Наем на автомобил. Цените са с ДДС 20%.</div>
-
           <div class="invoice-parties">
             <div class="party-card">
               <h4>Доставчик</h4>
               <div class="name">${escHtml(sup.name)}</div>
-              <div class="party-row"><span class="icon">🆔</span><span>ЕИК: ${escHtml(sup.eik || '—')} ${sup.vat ? ' | ДДС №: '+escHtml(sup.vat) : ''}</span></div>
-              <div class="party-row"><span class="icon">👤</span><span>МОЛ: ${escHtml(sup.mol || '—')}</span></div>
-              <div class="party-row"><span class="icon">📍</span><span>${escHtml(sup.addr || '—')}</span></div>
-              <div class="party-row"><span class="icon">✉️</span><span>${escHtml(sup.email || '—')}</span></div>
-              <div class="party-row"><span class="icon">📞</span><span>${escHtml(sup.phone || '—')}</span></div>
-              <div class="party-row"><span class="icon">🏦</span><span>${escHtml(sup.bank || '—')}</span></div>
-              <div class="party-row"><span class="icon">💳</span><span>IBAN: ${escHtml(sup.iban || '—')} | BIC: ${escHtml(sup.bic || '—')}</span></div>
+              <div class="party-row">ЕИК: ${escHtml(sup.eik || '—')} ${sup.vat ? ' | ДДС №: '+escHtml(sup.vat) : ''}</div>
+              <div class="party-row">МОЛ: ${escHtml(sup.mol || '—')}</div>
+              <div class="party-row">${escHtml(sup.addr || '—')}</div>
+              <div class="party-row">${escHtml(sup.email || '—')} | ${escHtml(sup.phone || '—')}</div>
+              <div class="party-row">Банка: ${escHtml(sup.bank || '—')}</div>
+              <div class="party-row">IBAN: ${escHtml(sup.iban || '—')} | BIC: ${escHtml(sup.bic || '—')}</div>
             </div>
             <div class="party-card">
               <h4>Получател</h4>
               <div class="name">${escHtml(payload.buyerName || '')}</div>
-              <div class="party-row"><span class="icon">🆔</span><span>${payload.buyerType==='company'
+              <div class="party-row">${payload.buyerType==='company'
                 ? `ЕИК: ${escHtml(payload.buyerEik || '—')} ${payload.buyerVat ? ' | ДДС №: '+escHtml(payload.buyerVat) : ''}`
-                : `ЕГН: ${escHtml(payload.buyerEgn || '—')}`}</span></div>
-              ${payload.buyerMol ? `<div class="party-row"><span class="icon">👤</span><span>МОЛ: ${escHtml(payload.buyerMol)}</span></div>` : ''}
-              <div class="party-row"><span class="icon">📍</span><span>${escHtml(payload.buyerAddr || '—')}</span></div>
-              <div class="party-row"><span class="icon">✉️</span><span>${escHtml(payload.buyerEmail || '—')}</span></div>
+                : `ЕГН: ${escHtml(payload.buyerEgn || '—')}`}</div>
+              ${payload.buyerMol ? `<div class="party-row">МОЛ: ${escHtml(payload.buyerMol)}</div>` : ''}
+              <div class="party-row">${escHtml(payload.buyerAddr || '—')}</div>
+              <div class="party-row">${escHtml(payload.buyerEmail || '—')}</div>
               ${(payload.buyerBank || payload.buyerIban || payload.buyerBic) ? `
-                <div class="party-row"><span class="icon">🏦</span><span>${escHtml(payload.buyerBank || '—')}</span></div>
-                <div class="party-row"><span class="icon">💳</span><span>IBAN: ${escHtml(payload.buyerIban || '—')} | BIC: ${escHtml(payload.buyerBic || '—')}</span></div>
+                <div class="party-row">Банка: ${escHtml(payload.buyerBank || '—')}</div>
+                <div class="party-row">IBAN: ${escHtml(payload.buyerIban || '—')} | BIC: ${escHtml(payload.buyerBic || '—')}</div>
               ` : ''}
             </div>
           </div>
@@ -3580,11 +4095,11 @@
                 <tr>
                   <th style="width:40%;">Описание</th>
                   <th class="center" style="width:8%;">Кол-во</th>
-                  <th class="num" style="width:12%;">Ед. цена</th>
+                  <th class="num" style="width:12%;">Ед. цена (с ДДС)</th>
                   <th class="center" style="width:8%;">ДДС %</th>
                   <th class="num" style="width:12%;">Сума без ДДС</th>
                   <th class="num" style="width:10%;">ДДС</th>
-                  <th class="num" style="width:10%;">Сума с ДДС</th>
+                  <th class="num" style="width:10%;">Общо с ДДС</th>
                 </tr>
               </thead>
               <tbody>${rows}</tbody>
@@ -3592,30 +4107,64 @@
           </div>
 
           <div class="invoice-totals">
-            <div class="row"><span>Междинна сума</span><span class="num">${fmtMoney(totals.subtotal)}</span></div>
+            <div class="row"><span>Данъчна основа (без ДДС)</span><span class="num">${fmtMoney(totals.subtotal)}</span></div>
             <div class="row" style="padding-bottom:8px; border-bottom:1px solid #D1D5DB;"><span>ДДС (20%)</span><span class="num">${fmtMoney(totals.vatAmount)}</span></div>
-            <div class="invoice-total-final"><span>Общо</span><span class="amount">${fmtMoney(totals.total)}</span></div>
+            <div class="invoice-total-final"><span>Общо (с ДДС)</span><span class="amount">${fmtMoney(totals.total)}</span></div>
           </div>
 
           <div class="invoice-footer">
             <span>Генерирана от системата на ${fmtDate(new Date().toISOString())}</span>
-            <span></span>
             <span>${payload.paymentMethod ? 'Начин на плащане: '+payload.paymentMethod : ''} ${payload.paymentTerms ? 'Условия: '+payload.paymentTerms : ''}</span>
           </div>
+      `;
+
+      const policyPages = `
+        <div class="inv-policy-page">
+          <h3 class="inv-policy-title">${escHtml(polTerms?.title || 'Условия за ползване')}</h3>
+          <div class="inv-policy-body">${replPol(polTerms?.defaultContent || '')}</div>
+        </div>
+        <div class="inv-policy-page">
+          <h3 class="inv-policy-title">${escHtml(polCancel?.title || 'Политика за анулиране')}</h3>
+          <div class="inv-policy-body">${replPol(polCancel?.defaultContent || '')}</div>
+        </div>
+        <div class="inv-policy-page">
+          <h3 class="inv-policy-title">${escHtml(polInsurance?.title || 'Застраховки')}</h3>
+          <div class="inv-policy-body">${replPol(polInsurance?.defaultContent || '')}</div>
         </div>
       `;
+
+      const html = `
+        <div class="invoice-shell" id="invoicePrintArea">
+          <div class="inv-no-print" style="display:flex; justify-content:flex-end; gap:8px; margin-bottom:-8px;">
+            <button class="btn-secondary" id="editInvView" style="height:34px; display:flex; align-items:center; gap:6px; padding:0 12px;">Редактирай</button>
+            <button class="btn-secondary" id="printInvView" style="height:34px; display:flex; align-items:center; gap:6px; padding:0 12px;">Принтирай / PDF</button>
+          </div>
+          ${invoiceBody}
+          ${policyPages}
+        </div>
+      `;
+
+      const printInvoice = () => {
+        const fullHTML = buildProformaStandaloneHTML({ reservation, invoice, company: companyCache });
+        const printWin = window.open('', '_blank', 'width=900,height=700');
+        if (!printWin) return;
+        printWin.document.write(fullHTML);
+        printWin.document.close();
+        printWin.onload = () => { printWin.focus(); printWin.print(); };
+      };
+
       if (asModal) {
         showModal(`<div style="max-width:1100px;max-height:82vh;overflow:auto;">${html}</div>`, (wrap, close) => {
           const printBtn = wrap.querySelector('#printInvView');
           const editBtn = wrap.querySelector('#editInvView');
-          if (printBtn) printBtn.onclick = () => window.print();
+          if (printBtn) printBtn.onclick = printInvoice;
           if (editBtn) editBtn.onclick = () => { close(); openInvoiceEditorModal(reservationId); };
         });
       } else {
         if (host) host.innerHTML = html;
         const printBtn = host ? $('#printInvView', host) : null;
         const editBtn = host ? $('#editInvView', host) : null;
-        if (printBtn) printBtn.onclick = () => { window.print(); };
+        if (printBtn) printBtn.onclick = printInvoice;
         if (editBtn) editBtn.onclick = () => openInvoiceEditorModal(reservationId);
       }
     }
@@ -3633,7 +4182,7 @@
       const days = (() => { const a=new Date(reservation.from), b=new Date(reservation.to); return Math.max(1, Math.ceil((b-a)/86400000)); })();
       const defaultItems = normalizeInvoiceItems(invoice?.items || [
         {
-          description: `Наем на автомобил ${reservation.car?.brand||''} ${reservation.car?.model||''} (${fmtDate(new Date(reservation.from))} → ${fmtDate(new Date(reservation.to))})`,
+          description: `Наем на автомобил ${reservation.car?.brand||''} ${reservation.car?.model||''}`.trim(),
           qty: days,
           unitPrice: reservation.total && days ? reservation.total / days : (reservation.car?.pricePerDay || 0),
           vatRate: 20
@@ -3674,7 +4223,7 @@
           <div class="grid-4" data-row="${idx}" style="align-items:end; gap:8px; margin-bottom:6px;">
             <div><div class="section-title">Описание</div><input data-field="description" class="input" ${locked?'disabled':''} value="${it.description || ''}"></div>
             <div><div class="section-title">Кол-во</div><input data-field="qty" type="number" step="0.01" class="input" ${locked?'disabled':''} value="${it.qty}"></div>
-            <div><div class="section-title">Ед. цена</div><input data-field="unitPrice" type="number" step="0.01" class="input" ${locked?'disabled':''} value="${it.unitPrice}"></div>
+            <div><div class="section-title">Ед. цена (с ДДС)</div><input data-field="unitPrice" type="number" step="0.01" class="input" ${locked?'disabled':''} value="${it.unitPrice}"></div>
             <div><div class="section-title">ДДС %</div><input data-field="vatRate" type="number" step="1" class="input" ${locked?'disabled':''} value="${it.vatRate}"></div>
             <div style="display:flex;align-items:center;gap:6px;">
               ${locked ? '' : `<button class="btn-secondary" data-del="${idx}" type="button" style="height:32px;">Изтрий</button>`}
@@ -3702,9 +4251,9 @@
         const el = host.querySelector('#invTotals');
         if (!el) return;
         el.innerHTML = `
-          <div>Междинна сума: €${t.subtotal.toFixed(2)}</div>
+          <div>Данъчна основа (без ДДС): €${t.subtotal.toFixed(2)}</div>
           <div>ДДС (20%): €${t.vatAmount.toFixed(2)}</div>
-          <div><strong>Общо: €${t.total.toFixed(2)}</strong></div>
+          <div><strong>Общо (с ДДС): €${t.total.toFixed(2)}</strong></div>
         `;
       };
       const badge = (st) => `<span class="pill pill-status-${st}">${st}</span>`;
@@ -3917,7 +4466,7 @@
         }
       });
 
-      $('#printInv', host)?.addEventListener('click', () => { window.print(); });
+      $('#printInv', host)?.addEventListener('click', () => { loadInvoiceView(reservationId, true); });
     }
     function openInvoiceEditorModal(reservationId) {
       showModal(`<div id="invEditorModal" style="max-width:1100px;max-height:82vh;overflow:auto;">Зареждане...</div>`, (wrap) => {
@@ -3958,6 +4507,28 @@
             <div><div class="section-title">Стартов номер проформа</div><input name="proStart" type="number" min="1" class="input" value="1"></div>
             <div><div class="section-title">Стартов номер фактура</div><input name="invStart" type="number" min="1" class="input" value="1"></div>
           </div>
+          <div class="header" style="padding:16px 0 8px 0; border:0; margin-top:8px;"><h3 style="font-size:15px; color:#1E3A8A;">Допълнителни услуги (цени с ДДС)</h3></div>
+          <div class="grid-2">
+            <div><div class="section-title">Допълнителен шофьор (€/ден)</div><input name="extraDriverPrice" type="number" min="0" step="0.01" class="input" value="10"></div>
+            <div><div class="section-title">Застраховка пълно каско (€/ден)</div><input name="insurancePrice" type="number" min="0" step="0.01" class="input" value="15"></div>
+          </div>
+          <div class="header" style="padding:16px 0 8px 0; border:0; margin-top:8px;"><h3 style="font-size:15px; color:#1E3A8A;">📧 Имейл настройки (SMTP)</h3></div>
+          <p style="font-size:12px; color:#6B7280; margin:0 0 8px;">Конфигурирайте SMTP за автоматично изпращане на имейл при нова резервация.</p>
+          <div class="grid-2">
+            <div><div class="section-title">SMTP Хост</div><input name="smtpHost" class="input" placeholder="smtp.gmail.com"></div>
+            <div><div class="section-title">SMTP Порт</div><input name="smtpPort" type="number" class="input" value="587" placeholder="587"></div>
+          </div>
+          <div class="grid-2">
+            <div><div class="section-title">SMTP Потребител</div><input name="smtpUser" class="input" placeholder="user@gmail.com"></div>
+            <div><div class="section-title">SMTP Парола</div><input name="smtpPass" type="password" class="input" placeholder="app password"></div>
+          </div>
+          <div class="grid-2">
+            <div><div class="section-title">Имейл подател (From)</div><input name="smtpFrom" class="input" placeholder="noreply@meniar.com"></div>
+            <div style="display:flex; align-items:flex-end;">
+              <button type="button" class="btn-secondary" id="testSmtp" style="height:40px; font-size:13px;">Тест имейл</button>
+            </div>
+          </div>
+          <div id="smtpTestMsg" style="display:none; font-size:13px; margin-top:4px;"></div>
           <div class="row" style="justify-content:flex-end; gap:8px;">
             <button type="submit" class="btn-primary" id="saveCompany">Запази</button>
           </div>
@@ -3991,7 +4562,14 @@
       iban: companyForm.querySelector('[name="iban"]'),
       bic: companyForm.querySelector('[name="bic"]'),
       proStart: companyForm.querySelector('[name="proStart"]'),
-      invStart: companyForm.querySelector('[name="invStart"]')
+      invStart: companyForm.querySelector('[name="invStart"]'),
+      extraDriverPrice: companyForm.querySelector('[name="extraDriverPrice"]'),
+      insurancePrice: companyForm.querySelector('[name="insurancePrice"]'),
+      smtpHost: companyForm.querySelector('[name="smtpHost"]'),
+      smtpPort: companyForm.querySelector('[name="smtpPort"]'),
+      smtpUser: companyForm.querySelector('[name="smtpUser"]'),
+      smtpPass: companyForm.querySelector('[name="smtpPass"]'),
+      smtpFrom: companyForm.querySelector('[name="smtpFrom"]')
     };
     const clearCompanyErrors = () => {
       $$('.err-msg', companyForm).forEach(n => n.remove());
@@ -4154,6 +4732,11 @@
       set('phone', data?.phone); set('email', data?.email);
       set('bank', data?.bank); set('iban', data?.iban); set('bic', data?.bic);
       set('proStart', data?.proStart || 1); set('invStart', data?.invStart || 1);
+      set('extraDriverPrice', data?.extraDriverPrice ?? 10); set('insurancePrice', data?.insurancePrice ?? 15);
+      set('smtpHost', data?.smtpHost); set('smtpPort', data?.smtpPort || 587);
+      set('smtpUser', data?.smtpUser); set('smtpFrom', data?.smtpFrom);
+      // Don't overwrite password field if it's a masked value
+      if (data?.smtpPass) companyFields.smtpPass.placeholder = '••••••••';
     }
     loadCompany();
     const validateCompanyForm = (showErrors=false) => {
@@ -4216,6 +4799,21 @@
       if (!invVal.ok) { ok=false; if (showErrors) setCompanyError(companyFields.invStart, invVal.err==='lessThanPro' ? 'Старт фактура трябва да е ≥ старт проформа' : 'Старт фактура трябва да е цяло число ≥ 1'); }
       else res.invStart = invVal.value;
 
+      // Extra services prices (optional, default to current values)
+      const edp = Number(companyFields.extraDriverPrice?.value);
+      if (isNaN(edp) || edp < 0) { ok=false; if (showErrors) setCompanyError(companyFields.extraDriverPrice, 'Цената трябва да е ≥ 0'); }
+      else res.extraDriverPrice = edp;
+      const ip = Number(companyFields.insurancePrice?.value);
+      if (isNaN(ip) || ip < 0) { ok=false; if (showErrors) setCompanyError(companyFields.insurancePrice, 'Цената трябва да е ≥ 0'); }
+      else res.insurancePrice = ip;
+
+      // SMTP (optional, no validation needed - just pass through)
+      res.smtpHost = (companyFields.smtpHost?.value || '').trim();
+      res.smtpPort = Number(companyFields.smtpPort?.value) || 587;
+      res.smtpUser = (companyFields.smtpUser?.value || '').trim();
+      res.smtpPass = (companyFields.smtpPass?.value || '').trim();
+      res.smtpFrom = (companyFields.smtpFrom?.value || '').trim();
+
       if (!ok && showErrors) scrollToCompanyError();
       return { ok, values: res };
     };
@@ -4248,6 +4846,34 @@
         setTimeout(() => { msg.style.display = 'none'; msg.style.color = '#0F8E64'; msg.textContent = 'Записано успешно.'; }, 2500);
       }
     };
+
+    // Test SMTP button
+    const testSmtpBtn = $('#testSmtp');
+    if (testSmtpBtn) testSmtpBtn.onclick = async () => {
+      const smtpMsg = $('#smtpTestMsg');
+      smtpMsg.style.display = 'block';
+      smtpMsg.style.color = '#6B7280';
+      smtpMsg.textContent = 'Изпращане на тестов имейл...';
+      try {
+        const res = await apiFetch('/api/test-smtp', {
+          method: 'POST',
+          body: JSON.stringify({
+            smtpHost: companyFields.smtpHost?.value?.trim(),
+            smtpPort: Number(companyFields.smtpPort?.value) || 587,
+            smtpUser: companyFields.smtpUser?.value?.trim(),
+            smtpPass: companyFields.smtpPass?.value?.trim(),
+            smtpFrom: companyFields.smtpFrom?.value?.trim()
+          })
+        });
+        smtpMsg.style.color = '#059669';
+        smtpMsg.textContent = '✓ Тестовият имейл е изпратен успешно!';
+      } catch (err) {
+        smtpMsg.style.color = '#B42318';
+        smtpMsg.textContent = '✗ Грешка: ' + (err.message || 'Неуспешно свързване');
+      }
+      setTimeout(() => smtpMsg.style.display = 'none', 5000);
+    };
+
     async function loadLocations() {
       let list = [];
       try { list = await apiFetch('/api/locations'); } catch { list = []; }
@@ -4545,13 +5171,13 @@
       `;
       grid.appendChild(card);
 
-      // Render specs directly from car fields (no extra API calls)
+      // Render specs directly from car fields: transmission, seats, fuel
       const specsEl = document.getElementById(`vp-specs-${c.id}`);
       if (specsEl) {
         const specs = [];
-        if (c.transmission) specs.push({ icon: gearIcon(), text: c.transmission });
-        if (c.fuel) specs.push({ icon: fuelIcon(), text: c.fuel });
+        if (c.transmission) specs.push({ icon: gearIcon(), text: displayVal(c.transmission) });
         if (c.seats) specs.push({ icon: seatIcon(), text: c.seats + ' места' });
+        if (c.fuel) specs.push({ icon: fuelIcon(), text: displayVal(c.fuel) });
         specsEl.innerHTML = specs.map(s => `<div class="cc-spec-item">${s.icon}<span>${escHtml(String(s.text))}</span></div>`).join('');
       }
 
@@ -4634,7 +5260,7 @@
       <!-- VIDEO SECTION -->
       <section class="au-video-section">
         <div class="au-video-inner">
-          <img src="about-video.jpg" alt="Предаване на ключове за автомобил под наем" loading="lazy">
+          <img src="/uploads/site/about-video.jpg" onerror="this.src='about-video.jpg'" alt="Предаване на ключове за автомобил под наем" loading="lazy">
           <div class="au-video-overlay"></div>
         </div>
       </section>
@@ -4691,7 +5317,7 @@
             </div>
           </div>
           <div class="au-memories-img">
-            <img src="memories-family.jpg" alt="Щастливо семейство в кола под наем" loading="lazy">
+            <img src="/uploads/site/memories-family.jpg" onerror="this.src='memories-family.jpg'" alt="Щастливо семейство в кола под наем" loading="lazy">
           </div>
         </div>
       </section>
@@ -4706,7 +5332,7 @@
             </div>
             <p class="au-review-text">Наех кола за семейна почивка и останах изключително доволен. Автомобилът беше чист, в перфектно състояние, а обслужването — бързо и професионално. Определено ще се върна отново!</p>
             <div class="au-review-author">
-              <img class="au-review-avatar" src="face-georgi.jpg" alt="Георги Димитров">
+              <img class="au-review-avatar" src="/uploads/site/face-georgi.jpg" onerror="this.src='face-georgi.jpg'" alt="Георги Димитров">
               <div>
                 <div class="au-review-name">Георги Димитров</div>
                 <div class="au-review-stars">★★★★★</div>
@@ -4719,7 +5345,7 @@
             </div>
             <p class="au-review-text">Много удобен процес на резервация. Плащането по банков път е прозрачно и без изненади. Колата беше точно както в описанието. Препоръчвам на всеки, който търси надеждна услуга!</p>
             <div class="au-review-author">
-              <img class="au-review-avatar" src="face-maria.jpg" alt="Мария Иванова">
+              <img class="au-review-avatar" src="/uploads/site/face-maria.jpg" onerror="this.src='face-maria.jpg'" alt="Мария Иванова">
               <div>
                 <div class="au-review-name">Мария Иванова</div>
                 <div class="au-review-stars">★★★★★</div>
@@ -4732,7 +5358,7 @@
             </div>
             <p class="au-review-text">Използвам услугите им за служебни пътувания от година насам. Винаги коректни, гъвкави и отзивчиви. Фактурирането е бързо и точно. Отлично партньорство за бизнеса!</p>
             <div class="au-review-author">
-              <img class="au-review-avatar" src="face-petar.jpg" alt="Петър Стоянов">
+              <img class="au-review-avatar" src="/uploads/site/face-petar.jpg" onerror="this.src='face-petar.jpg'" alt="Петър Стоянов">
               <div>
                 <div class="au-review-name">Петър Стоянов</div>
                 <div class="au-review-stars">★★★★★</div>
@@ -4851,6 +5477,8 @@
     '{{company_email}}':   () => (companyInfo||{}).email   || 'info@meniar.com',
     '{{company_phone}}':   () => (companyInfo||{}).phone   || '+359 888 810 469',
     '{{company_phone_clean}}': () => ((companyInfo||{}).phone || '+359888810469').replace(/[\s-]/g,''),
+    '{{extra_driver_price}}': () => Number((companyInfo||{}).extraDriverPrice ?? 10).toFixed(2),
+    '{{insurance_price}}': () => Number((companyInfo||{}).insurancePrice ?? 15).toFixed(2),
   };
 
   /** Replace {{tokens}} in html with actual companyInfo values */
@@ -4918,7 +5546,7 @@
 <li>Минимум <strong>1 година</strong> шофьорски опит.</li>
 <li>Валидна шофьорска книжка (ЕС формат).</li>
 <li>Кредитна/дебитна карта за депозит.</li>
-<li>Допълнителен водач – <strong>€10/ден</strong>.</li>
+<li>Допълнителен водач – <strong>€{{extra_driver_price}}/ден</strong>.</li>
 </ul>
 
 <h3>Цената включва</h3>
@@ -4937,7 +5565,7 @@
 <li><strong>Гражданска отговорност (Third-party liability):</strong> Задължително покритие.</li>
 <li><strong>CDW (Collision Damage Waiver):</strong> Покритие на щети до размера на самоучастието. Валидно само с полицейски протокол.</li>
 <li><strong>TP (Theft Protection):</strong> Защита при кражба.</li>
-<li><strong>Super CDW / Full Coverage:</strong> Намалява самоучастие до €0 — <strong>€15/ден</strong>.</li>
+<li><strong>Super CDW / Full Coverage:</strong> Намалява самоучастие до €0 — <strong>€{{insurance_price}}/ден</strong>.</li>
 </ul>
 
 <h3>Плащане и депозит</h3>
@@ -5021,7 +5649,7 @@
 <p>Защита при кражба на автомобила. Покритие до размера на самоучастието (<strong>€500–1500</strong>). Изисква полицейски протокол.</p>
 
 <h3>Super CDW / Full Coverage</h3>
-<p>Допълнителна опция на цена от <strong>€15/ден</strong>. Намалява самоучастието до <strong>€0</strong> — пълно покритие за спокойствие по пътищата.</p>
+<p>Допълнителна опция на цена от <strong>€{{insurance_price}}/ден</strong>. Намалява самоучастието до <strong>€0</strong> — пълно покритие за спокойствие по пътищата.</p>
 
 <h3>Допълнителни застраховки</h3>
 <ul>
@@ -5147,6 +5775,216 @@
       });
     }, { rootMargin: '-100px 0px -60% 0px' });
     $$('.pol-section').forEach(sec => observer.observe(sec));
+  }
+
+  /* ===== ADMIN SITE IMAGES ===== */
+  function renderAdminImages() {
+    mountAdminIfNeeded(true);
+    const root = $('#adminRoot');
+    root.innerHTML = adminNav('images') + `
+      <div class="panel" style="padding:16px;">
+        <div class="header" style="padding:0 0 12px 0; border:0;">
+          <h2>Снимки на сайта</h2>
+        </div>
+        <p style="color:#6B7280; font-size:13px; margin:0 0 16px;">
+          Управлявайте всички декоративни снимки по сайта — фонове, секции, аватари на ревюта.
+          <br>Препоръчителните размери са посочени до всяка снимка. Поддържани формати: JPG, PNG, WebP, AVIF (до 5 MB).
+        </p>
+        <div id="siteImagesGrid" style="display:grid; gap:16px;">
+          <div style="text-align:center; color:#9CA3AF; padding:32px;">Зареждане...</div>
+        </div>
+      </div>
+    `;
+
+    loadSiteImages();
+
+    async function loadSiteImages() {
+      try {
+        const slots = await fetch(API_BASE + '/api/site-images').then(r => r.json());
+        const grid = $('#siteImagesGrid');
+        if (!grid) return;
+
+        const imgIcon = '<svg style="color:#9CA3AF;" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
+        const uploadIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
+
+        grid.innerHTML = slots.map(function(slot) {
+          var isAvatar = slot.key.indexOf('face-') === 0;
+          var thumbRadius = isAvatar ? '50%' : '10px';
+          var preview = '';
+          if (slot.currentUrl) {
+            preview = '<img src="' + escHtml(slot.currentUrl) + '?t=' + Date.now() + '" alt="' + escHtml(slot.label) + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
+                      '<svg style="display:none;color:#9CA3AF;" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
+          } else {
+            preview = imgIcon;
+          }
+          var statusBadge = slot.currentUrl
+            ? '<span style="font-size:11px;color:#10B981;margin-left:8px;">✓ Качена</span>'
+            : '<span style="font-size:11px;color:#EF4444;margin-left:8px;">✗ Няма снимка</span>';
+
+          return '<div class="si-slot" data-key="' + escHtml(slot.key) + '" style="display:grid;grid-template-columns:140px 1fr;gap:16px;align-items:center;padding:14px;border:1px solid #E5E7EB;border-radius:12px;background:#FAFAFA;">' +
+            '<div style="width:140px;height:96px;border-radius:' + thumbRadius + ';overflow:hidden;background:#E5E7EB;display:grid;place-items:center;border:2px dashed #D1D5DB;">' +
+              preview +
+            '</div>' +
+            '<div>' +
+              '<div style="font-weight:600;font-size:14px;color:#111827;margin-bottom:2px;">' + escHtml(slot.label) + '</div>' +
+              '<div style="font-size:12px;color:#6B7280;margin-bottom:8px;">Размер: <strong>' + escHtml(slot.hint) + '</strong></div>' +
+              '<label class="btn-primary si-upload-label" data-key="' + escHtml(slot.key) + '" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;padding:6px 14px;border-radius:8px;">' +
+                uploadIcon + ' Качи снимка' +
+                '<input type="file" accept="image/jpeg,image/png,image/webp,image/avif" class="si-file-input" style="display:none;">' +
+              '</label>' +
+              statusBadge +
+            '</div>' +
+          '</div>';
+        }).join('');
+
+        // Bind upload handlers via JS (not inline onchange, which CSP blocks)
+        $$('.si-file-input').forEach(function(input) {
+          input.addEventListener('change', function() {
+            var key = input.closest('.si-upload-label').getAttribute('data-key');
+            if (key) handleSiteImageUpload(key, input);
+          });
+        });
+
+      } catch (err) {
+        const grid = $('#siteImagesGrid');
+        if (grid) grid.innerHTML = '<div style="color:#EF4444; padding:16px;">Грешка при зареждане на снимките.</div>';
+        console.error('Failed to load site images:', err);
+      }
+    }
+
+    async function handleSiteImageUpload(key, input) {
+      if (!input.files || !input.files[0]) return;
+      const file = input.files[0];
+      if (file.size > 5 * 1024 * 1024) { alert('Файлът е по-голям от 5 MB.'); return; }
+
+      const fd = new FormData();
+      fd.append('image', file);
+
+      // Show loading state
+      const btn = input.closest('label');
+      const origText = btn.innerHTML;
+      btn.innerHTML = '<span style="font-size:12px;">Качване...</span>';
+      btn.style.opacity = '0.6';
+      btn.style.pointerEvents = 'none';
+
+      try {
+        const resp = await fetch(API_BASE + '/api/site-images/' + encodeURIComponent(key), {
+          method: 'POST',
+          body: fd
+        });
+        if (!resp.ok) {
+          const errData = await resp.json().catch(function() { return {}; });
+          throw new Error(errData.error || 'Upload failed');
+        }
+        alert('Снимката е качена успешно!');
+        // Reload the images list to show updated thumbnails
+        loadSiteImages();
+      } catch (err) {
+        alert('Грешка: ' + err.message);
+        btn.innerHTML = origText;
+        btn.style.opacity = '';
+        btn.style.pointerEvents = '';
+      }
+    }
+  }
+
+  /* ===== ADMIN NEWSLETTER ===== */
+  function renderAdminNewsletter() {
+    mountAdminIfNeeded(true);
+    const root = $('#adminRoot');
+    root.innerHTML = adminNav('newsletter') + `
+      <div class="panel" style="padding:16px;">
+        <div class="header" style="padding:0 0 12px 0; border:0; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+          <h2>Абонати за бюлетин</h2>
+          <span id="nlCount" style="font-size:13px; color:#6B7280;"></span>
+        </div>
+        <div id="nlList" style="margin-top:8px;">
+          <div style="text-align:center; color:#9CA3AF; padding:32px;">Зареждане...</div>
+        </div>
+      </div>
+    `;
+    loadNewsletterList();
+
+    async function loadNewsletterList() {
+      const listEl = $('#nlList');
+      const countEl = $('#nlCount');
+      if (!listEl) return;
+      try {
+        const res = await fetch(API_BASE + '/api/newsletter', {
+          headers: { 'Accept': 'application/json' }
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const list = await res.json();
+        if (countEl) countEl.textContent = 'Общо: ' + list.length + ' абонат' + (list.length === 1 ? '' : 'а');
+        if (!list.length) {
+          listEl.innerHTML = '<div style="text-align:center; color:#9CA3AF; padding:32px;">Няма абонати все още.</div>';
+          return;
+        }
+        const fmtDate = (d) => { const dt = new Date(d); return isNaN(dt) ? d : dt.toLocaleDateString('bg-BG', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }); };
+        listEl.innerHTML = `
+          <div style="overflow-x:auto;">
+            <table class="admin-table" style="width:100%; border-collapse:collapse; font-size:13px;">
+              <thead>
+                <tr style="background:#F3F4F6; text-align:left;">
+                  <th style="padding:10px 14px; font-weight:600; color:#374151;">№</th>
+                  <th style="padding:10px 14px; font-weight:600; color:#374151;">Имейл</th>
+                  <th style="padding:10px 14px; font-weight:600; color:#374151;">Дата на абониране</th>
+                  <th style="padding:10px 14px; font-weight:600; color:#374151; width:80px;"></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${list.map((item, i) => `
+                  <tr style="border-bottom:1px solid #E5E7EB;">
+                    <td style="padding:10px 14px; color:#6B7280;">${i + 1}</td>
+                    <td style="padding:10px 14px; font-weight:500;">
+                      <a href="mailto:${escHtml(item.email)}" style="color:#4338CA; text-decoration:none;">${escHtml(item.email)}</a>
+                    </td>
+                    <td style="padding:10px 14px; color:#6B7280;">${fmtDate(item.createdAt)}</td>
+                    <td style="padding:10px 14px; text-align:center;">
+                      <button class="nl-del-btn" data-id="${escHtml(item.id)}" style="background:none; border:1px solid #EF4444; color:#EF4444; border-radius:6px; padding:4px 10px; cursor:pointer; font-size:12px; transition:all 0.15s;" title="Изтрий">✕</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;">
+            <button id="nlExportBtn" class="btn-secondary" style="font-size:13px; padding:8px 16px;">Експортирай CSV</button>
+          </div>
+        `;
+        // Delete handlers
+        $$('.nl-del-btn', listEl).forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!confirm('Изтриване на този абонат?')) return;
+            const id = btn.dataset.id;
+            btn.disabled = true;
+            btn.textContent = '...';
+            try {
+              await fetch(API_BASE + '/api/newsletter/' + id, {
+                method: 'DELETE'
+              });
+              loadNewsletterList();
+            } catch (e) { alert('Грешка: ' + e.message); btn.disabled = false; btn.textContent = '✕'; }
+          });
+        });
+        // Export CSV
+        const exportBtn = $('#nlExportBtn', listEl);
+        if (exportBtn) {
+          exportBtn.addEventListener('click', () => {
+            const csv = 'Имейл,Дата\n' + list.map(it => '"' + it.email + '","' + it.createdAt + '"').join('\n');
+            const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'newsletter_' + new Date().toISOString().slice(0, 10) + '.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+          });
+        }
+      } catch (e) {
+        listEl.innerHTML = '<div style="color:#EF4444; padding:16px;">Грешка при зареждане: ' + escHtml(e.message) + '</div>';
+      }
+    }
   }
 
   /* ===== ADMIN POLICIES ===== */
@@ -5416,6 +6254,8 @@
       if (path === '#/admin/reservations') { renderAdminReservations(); scrollToTop(); return; }
       if (path === '#/admin/invoices') { renderAdminInvoices(); scrollToTop(); return; }
       if (path === '#/admin/policies') { renderAdminPolicies(); scrollToTop(); return; }
+      if (path === '#/admin/images') { renderAdminImages(); scrollToTop(); return; }
+      if (path === '#/admin/newsletter') { renderAdminNewsletter(); scrollToTop(); return; }
       renderAdminDashboard(); scrollToTop(); return;
     }
     if (hash.startsWith('#/reserve')) { renderWizard(); scrollToTop(); return; }

@@ -22,6 +22,8 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "nodemailer": "^8.0.1",
+    "pdfkit": "^0.17.2",
     "sharp": "^0.33.4"
   },
   "devDependencies": {
@@ -29,4 +31,3 @@
     "prisma": "^5.18.0"
   }
 }
-
