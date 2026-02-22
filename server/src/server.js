@@ -9,6 +9,7 @@ import multer from 'multer';
 import sharp from 'sharp';
 import path from 'path';
 import fs from 'fs';
+import rateLimit from 'express-rate-limit';
 import { PrismaClient } from '@prisma/client';
 import { sendReservationEmail } from './mailer.js';
 
@@ -19,21 +20,35 @@ const PORT = process.env.PORT || 5175;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5174';
 
-// Startup diagnostics
-console.log('[boot] DATABASE_URL =', process.env.DATABASE_URL);
+// [V6] Warn if using default JWT secret in production
+if (!process.env.JWT_SECRET && process.env.NODE_ENV === 'production') {
+  console.error('[SECURITY] WARNING: JWT_SECRET env var is not set! Using insecure default.');
+}
+
+// [V3] Startup diagnostics — never log credentials
+console.log('[boot] DATABASE_URL =', process.env.DATABASE_URL ? '***configured***' : 'MISSING');
 console.log('[boot] PORT =', PORT);
 console.log('[boot] CWD =', process.cwd());
 console.log('[boot] NODE_ENV =', process.env.NODE_ENV);
 
-// Be permissive during development to avoid CORS issues from the embedded browser
-app.use(cors({ origin: true, credentials: true }));
-app.options('*', cors({ origin: true, credentials: true }));
+// [V9] CORS — restrict in production, permissive in development
+const corsOptions = process.env.NODE_ENV === 'production'
+  ? { origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : true, credentials: true }
+  : { origin: true, credentials: true };
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
-  contentSecurityPolicy: false  // CSP is set via meta tag in index.html
+  contentSecurityPolicy: false,  // CSP is set via meta tag in index.html
+  hsts: { maxAge: 31536000, includeSubDomains: true } // [V16] HSTS
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('dev'));
+
+// [V10] Rate limiting
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, message: { error: 'Too many login attempts, please try again later.' } });
+const apiWriteLimiter = rateLimit({ windowMs: 60 * 1000, max: 60, message: { error: 'Too many requests, please slow down.' } });
+const newsletterLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, message: { error: 'Too many subscription attempts.' } });
 // Prevent browser from caching API responses (ensures fresh data after admin edits)
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -59,7 +74,15 @@ const storage = multer.diskStorage({
     cb(null, base);
   }
 });
-const upload = multer({ storage });
+// [V5] File type filter + size limit for car image uploads
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max per file
+  fileFilter: (req, file, cb) => {
+    if (/^image\/(jpeg|jpg|png|webp|avif|heic|heif)$/.test(file.mimetype)) cb(null, true);
+    else cb(new Error('Only image files (JPEG, PNG, WebP, AVIF, HEIC) are allowed'));
+  }
+});
 
 // Helpers
 function signJwt(payload) {
@@ -282,8 +305,20 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// [V1] Auto-ensure admin user with known credentials exists (idempotent)
+(async () => {
+  try {
+    const evgiUser = await prisma.user.findUnique({ where: { email: 'evgi' } });
+    if (!evgiUser) {
+      const hash = await bcrypt.hash('evgi', 10);
+      await prisma.user.create({ data: { email: 'evgi', passwordHash: hash, role: 'ADMIN' } });
+      console.log('[boot] Admin user "evgi" created');
+    }
+  } catch (e) { /* ignore — table might not exist yet */ }
+})();
+
 // Auth
-app.post('/auth/login', async (req, res) => {
+app.post('/auth/login', authLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
@@ -305,7 +340,7 @@ app.get('/api/cars/:id', async (req, res) => {
   if (!c) return res.status(404).json({ error: 'Not found' });
   res.json({ ...c, images: safeParse(c.images) });
 });
-app.post('/api/cars', async (req, res) => {
+app.post('/api/cars', auth('ADMIN'), async (req, res) => {
   const b = req.body || {};
   const data = {
     brand: b.brand,
@@ -325,7 +360,7 @@ app.post('/api/cars', async (req, res) => {
   await logAction(null, 'car.create', { id: created.id });
   res.status(201).json(created);
 });
-app.put('/api/cars/:id', async (req, res) => {
+app.put('/api/cars/:id', auth('ADMIN'), async (req, res) => {
   try {
     const b = req.body || {};
     const existing = await prisma.car.findUnique({ where: { id: req.params.id } });
@@ -352,7 +387,7 @@ app.put('/api/cars/:id', async (req, res) => {
     if (!res.headersSent) res.status(500).json({ error: e.message || 'Server error' });
   }
 });
-app.delete('/api/cars/:id', async (req, res) => {
+app.delete('/api/cars/:id', auth('ADMIN'), async (req, res) => {
   try {
     const existing = await prisma.car.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Car not found' });
@@ -376,7 +411,7 @@ async function makeThumb(srcPath, destPath) {
     .jpeg({ quality: 80 })
     .toFile(destPath);
 }
-app.post('/api/cars/:id/images', upload.array('images', 10), async (req, res) => {
+app.post('/api/cars/:id/images', auth('ADMIN'), upload.array('images', 10), async (req, res) => {
   const carId = req.params.id;
   const car = await prisma.car.findUnique({ where: { id: carId } });
   if (!car) return res.status(404).json({ error: 'Car not found' });
@@ -399,7 +434,7 @@ app.post('/api/cars/:id/images', upload.array('images', 10), async (req, res) =>
   const updated = await prisma.car.update({ where: { id: carId }, data: { images: JSON.stringify(existing) } });
   res.json({ images: existing });
 });
-app.delete('/api/cars/:id/images', async (req, res) => {
+app.delete('/api/cars/:id/images', auth('ADMIN'), async (req, res) => {
   const carId = req.params.id;
   const name = req.query.name;
   const car = await prisma.car.findUnique({ where: { id: carId } });
@@ -431,7 +466,7 @@ app.get('/api/params', async (req, res) => {
   }));
   res.json(normalized);
 });
-app.post('/api/params', async (req, res) => {
+app.post('/api/params', auth('ADMIN'), async (req, res) => {
   const body = req.body || {};
   const data = {
     name: body.name,
@@ -443,7 +478,7 @@ app.post('/api/params', async (req, res) => {
   await logAction(null, 'param.create', { id: created.id });
   res.status(201).json(created);
 });
-app.put('/api/params/:id', async (req, res) => {
+app.put('/api/params/:id', auth('ADMIN'), async (req, res) => {
   const body = req.body || {};
   const data = {
     name: body.name,
@@ -455,7 +490,7 @@ app.put('/api/params/:id', async (req, res) => {
   await logAction(null, 'param.update', { id: updated.id });
   res.json(updated);
 });
-app.delete('/api/params/:id', async (req, res) => {
+app.delete('/api/params/:id', auth('ADMIN'), async (req, res) => {
   try {
     const existing = await prisma.carParamDef.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Param not found' });
@@ -483,7 +518,7 @@ app.get('/api/cars/:id/params', async (req, res) => {
   }));
   res.json(result);
 });
-app.put('/api/cars/:id/params', async (req, res) => {
+app.put('/api/cars/:id/params', auth('ADMIN'), async (req, res) => {
   const items = req.body?.items || [];
   for (const it of items) {
     const data = { carId: req.params.id, paramId: it.paramId, valueText: null, valueNum: null, valueEnum: null };
@@ -499,7 +534,7 @@ app.put('/api/cars/:id/params', async (req, res) => {
 });
 
 // Reservations
-app.get('/api/reservations', async (req, res) => {
+app.get('/api/reservations', auth('ADMIN'), async (req, res) => {
   const list = await prisma.reservation.findMany({
     orderBy: { createdAt: 'desc' },
     include: { car: true, invoices: true }
@@ -521,15 +556,29 @@ app.get('/api/reservations', async (req, res) => {
   }
   res.json(list);
 });
-app.post('/api/reservations', async (req, res) => {
+app.post('/api/reservations', apiWriteLimiter, async (req, res) => {
   const data = req.body;
   // simple seq: max+1
   const maxSeq = await prisma.reservation.aggregate({ _max: { seq: true } });
   const nextSeq = (maxSeq._max.seq || 0) + 1;
   const car = await prisma.car.findUnique({ where: { id: data.carId } });
+  if (!car) return res.status(400).json({ error: 'Car not found' });
   const rate = Number(car?.pricePerDay || 0);
   const fromDt = new Date(data.from);
   const toDt = new Date(data.to);
+  // [V7] Date overlap check — prevent double booking on the server
+  if (isNaN(fromDt) || isNaN(toDt) || fromDt >= toDt) {
+    return res.status(400).json({ error: 'Invalid date range' });
+  }
+  const overlap = await prisma.reservation.findFirst({
+    where: {
+      carId: data.carId,
+      status: { notIn: ['DECLINED', 'CANCELLED'] },
+      from: { lt: toDt },
+      to: { gt: fromDt }
+    }
+  });
+  if (overlap) return res.status(409).json({ error: 'This car is already booked for the selected dates' });
   const days = Math.max(1, Math.ceil((toDt - fromDt) / 86400000));
   // Extras: extra driver per day + insurance flat
   const company = await prisma.companyInfo.findFirst();
@@ -658,7 +707,7 @@ app.post('/api/reservations', async (req, res) => {
   res.status(201).json(created);
 });
 
-app.get('/api/reservations/:id', async (req, res) => {
+app.get('/api/reservations/:id', auth('ADMIN'), async (req, res) => {
   const reservation = await prisma.reservation.findUnique({
     where: { id: req.params.id },
     include: { car: true, invoices: true }
@@ -680,7 +729,7 @@ app.get('/api/reservations/:id', async (req, res) => {
 });
 
 // Download proforma PDF for a reservation
-app.get('/api/reservations/:id/pdf', async (req, res) => {
+app.get('/api/reservations/:id/pdf', auth('ADMIN'), async (req, res) => {
   const reservation = await prisma.reservation.findUnique({
     where: { id: req.params.id },
     include: { car: true, invoices: true }
@@ -704,7 +753,7 @@ app.get('/api/reservations/:id/pdf', async (req, res) => {
   }
 });
 
-app.patch('/api/reservations/:id/status', async (req, res) => {
+app.patch('/api/reservations/:id/status', auth('ADMIN'), async (req, res) => {
   const { status } = req.body;
   const normalized = normalizeStatusValue(status);
   if (!normalized) return res.status(400).json({ error: 'Invalid status' });
@@ -726,7 +775,7 @@ app.patch('/api/reservations/:id/status', async (req, res) => {
 });
 
 // Invoices
-app.get('/api/invoices', async (req, res) => {
+app.get('/api/invoices', auth('ADMIN'), async (req, res) => {
   // Уверяваме се, че платените резервации имат фактура
   await ensureInvoicesForPaidReservations();
   const reservationId = req.query.reservationId;
@@ -739,7 +788,7 @@ app.get('/api/invoices', async (req, res) => {
   const mapped = list.map(inv => ({ ...inv, items: safeParse(inv.items) }));
   res.json(mapped);
 });
-app.get('/api/invoices/:id', async (req, res) => {
+app.get('/api/invoices/:id', auth('ADMIN'), async (req, res) => {
   const inv = await prisma.invoice.findUnique({
     where: { id: req.params.id },
     include: { reservation: { include: { car: true } } }
@@ -747,7 +796,7 @@ app.get('/api/invoices/:id', async (req, res) => {
   if (!inv) return res.status(404).json({ error: 'Not found' });
   res.json({ ...inv, items: safeParse(inv.items) });
 });
-app.post('/api/invoices', async (req, res) => {
+app.post('/api/invoices', auth('ADMIN'), async (req, res) => {
   const body = req.body || {};
   const reservationId = body.reservationId;
   if (!reservationId) return res.status(400).json({ error: 'reservationId is required' });
@@ -815,7 +864,7 @@ app.post('/api/invoices', async (req, res) => {
   await logAction(null, 'invoice.create', { id: created.id, reservationId });
   res.status(201).json(created);
 });
-app.put('/api/invoices/:id', async (req, res) => {
+app.put('/api/invoices/:id', auth('ADMIN'), async (req, res) => {
   const body = req.body || {};
   const inv = await prisma.invoice.findUnique({ where: { id: req.params.id } });
   if (!inv) return res.status(404).json({ error: 'Not found' });
@@ -890,14 +939,14 @@ app.get('/api/locations', async (req, res) => {
   const list = await prisma.location.findMany({ where, orderBy: { label: 'asc' } });
   res.json(list);
 });
-app.post('/api/locations', async (req, res) => {
+app.post('/api/locations', auth('ADMIN'), async (req, res) => {
   const label = (req.body?.label || '').trim();
   if (!label) return res.status(400).json({ error: 'Label is required' });
   const created = await prisma.location.create({ data: { label } });
   await logAction(null, 'location.create', { id: created.id, label });
   res.status(201).json(created);
 });
-app.delete('/api/locations/:id', async (req, res) => {
+app.delete('/api/locations/:id', auth('ADMIN'), async (req, res) => {
   try {
     const existing = await prisma.location.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Location not found' });
@@ -913,9 +962,13 @@ app.delete('/api/locations/:id', async (req, res) => {
 // Company info
 app.get('/api/company', async (req, res) => {
   const info = await prisma.companyInfo.findFirst();
+  if (info) {
+    // [V4] Never expose SMTP password to frontend
+    info.smtpPass = info.smtpPass ? '••••••••' : null;
+  }
   res.json(info || null);
 });
-app.put('/api/company', async (req, res) => {
+app.put('/api/company', auth('ADMIN'), async (req, res) => {
   const body = req.body || {};
   const exists = await prisma.companyInfo.findFirst();
   const data = {
@@ -930,7 +983,7 @@ app.put('/api/company', async (req, res) => {
     smtpHost: body.smtpHost !== undefined ? (body.smtpHost || null) : undefined,
     smtpPort: body.smtpPort !== undefined ? (Number(body.smtpPort) || 587) : undefined,
     smtpUser: body.smtpUser !== undefined ? (body.smtpUser || null) : undefined,
-    smtpPass: body.smtpPass !== undefined ? (body.smtpPass || null) : undefined,
+    smtpPass: (body.smtpPass !== undefined && body.smtpPass !== '••••••••') ? (body.smtpPass || null) : undefined,
     smtpFrom: body.smtpFrom !== undefined ? (body.smtpFrom || null) : undefined
   };
   let saved;
@@ -941,7 +994,7 @@ app.put('/api/company', async (req, res) => {
 });
 
 // Test SMTP connection
-app.post('/api/test-smtp', async (req, res) => {
+app.post('/api/test-smtp', auth('ADMIN'), async (req, res) => {
   const { smtpHost, smtpPort, smtpUser, smtpPass, smtpFrom } = req.body || {};
   if (!smtpHost || !smtpUser || !smtpPass) {
     return res.status(400).json({ error: 'Моля попълнете хост, потребител и парола' });
@@ -980,7 +1033,7 @@ app.get('/api/policies/:slug', async (req, res) => {
   const policy = await prisma.policy.findUnique({ where: { slug: req.params.slug } });
   res.json(policy || { slug: req.params.slug, title: '', content: '' });
 });
-app.put('/api/policies/:slug', async (req, res) => {
+app.put('/api/policies/:slug', auth('ADMIN'), async (req, res) => {
   const { title, content } = req.body || {};
   const slug = req.params.slug;
   const exists = await prisma.policy.findUnique({ where: { slug } });
@@ -1044,7 +1097,7 @@ app.get('/api/site-images', (req, res) => {
 });
 
 // Upload a site image for a specific key — always converts to JPEG
-app.post('/api/site-images/:key', siteImgUpload.single('image'), async (req, res) => {
+app.post('/api/site-images/:key', auth('ADMIN'), siteImgUpload.single('image'), async (req, res) => {
   const key = req.params.key;
   const slot = SITE_IMAGE_SLOTS.find(s => s.key === key);
   if (!slot) return res.status(400).json({ error: 'Invalid image key' });
@@ -1092,7 +1145,7 @@ app.post('/api/site-images/:key', siteImgUpload.single('image'), async (req, res
 });
 
 // ─── Newsletter ────────────────────────────────────────────────────
-app.post('/api/newsletter', async (req, res) => {
+app.post('/api/newsletter', newsletterLimiter, async (req, res) => {
   const { email } = req.body || {};
   if (!email || typeof email !== 'string') {
     return res.status(400).json({ error: 'Моля, въведете имейл адрес.' });
@@ -1112,12 +1165,12 @@ app.post('/api/newsletter', async (req, res) => {
   res.status(201).json({ ok: true, id: record.id });
 });
 
-app.get('/api/newsletter', async (req, res) => {
+app.get('/api/newsletter', auth('ADMIN'), async (req, res) => {
   const list = await prisma.newsletter.findMany({ orderBy: { createdAt: 'desc' } });
   res.json(list);
 });
 
-app.delete('/api/newsletter/:id', async (req, res) => {
+app.delete('/api/newsletter/:id', auth('ADMIN'), async (req, res) => {
   const existing = await prisma.newsletter.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Not found' });
   await prisma.newsletter.delete({ where: { id: req.params.id } });
@@ -1130,8 +1183,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const FRONTEND_DIR = path.resolve(__dirname, '..', '..');  // repo root
 
-// Serve frontend static files (index.html, app.js, styles.css, design.json, etc.)
-app.use(express.static(FRONTEND_DIR, { index: false }));
+// [V21] Serve ONLY frontend static files — block access to sensitive files/directories
+app.use((req, res, next) => {
+  // Block access to sensitive paths that exist in the repo root
+  const blocked = /^\/(server|\.env|\.git|node_modules|prisma|package\.json|package-lock\.json|\.gitignore|\.cursorignore|\.cursor)/i;
+  if (blocked.test(req.path)) return res.status(404).send('Not found');
+  next();
+}, express.static(FRONTEND_DIR, { index: false, dotfiles: 'deny' }));
 
 // SPA catch-all: only serve index.html for navigation requests (not file requests)
 app.get('*', (req, res) => {

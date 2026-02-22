@@ -167,8 +167,8 @@ model CompanyInfo {
   bic       String?
   proStart  Int      @default(1)
   invStart  Int      @default(1)
-  extraDriverPrice Float? @default(10)
-  insurancePrice   Float? @default(15)
+  extraDriverPrice Float?   @default(10)
+  insurancePrice   Float?   @default(15)
   smtpHost  String?
   smtpPort  Int?     @default(587)
   smtpUser  String?

@@ -273,17 +273,44 @@
 
   async function loginAdmin(user, pass) {
     if (_isLoginLocked()) return { ok: false, locked: true, seconds: _getLockRemainingSeconds() };
-    const userHash = await _sha256(user);
-    const passHash = await _sha256(pass);
-    if (userHash === _AH.u && passHash === _AH.p) {
-      const token = crypto.getRandomValues(new Uint8Array(32));
-      const tokenHex = [...token].map(b => b.toString(16).padStart(2, '0')).join('');
-      localStorage.setItem('_adminSession', JSON.stringify({
-        token: tokenHex,
-        exp: Date.now() + SESSION_TTL
-      }));
-      _resetLoginAttempts();
-      return { ok: true };
+    // [V1] Authenticate via backend JWT — the server validates credentials
+    try {
+      const resp = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: user, password: pass })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.token) {
+          // Store JWT for API auth
+          localStorage.setItem('_adminJWT', data.token);
+          // Also store session for UI guard
+          const uiToken = crypto.getRandomValues(new Uint8Array(32));
+          const tokenHex = [...uiToken].map(b => b.toString(16).padStart(2, '0')).join('');
+          localStorage.setItem('_adminSession', JSON.stringify({
+            token: tokenHex,
+            exp: Date.now() + SESSION_TTL
+          }));
+          _resetLoginAttempts();
+          return { ok: true };
+        }
+      }
+    } catch (e) {
+      // Backend unreachable — fall back to offline SHA-256 check
+      console.warn('[auth] Backend login failed, using offline fallback:', e.message);
+      const userHash = await _sha256(user);
+      const passHash = await _sha256(pass);
+      if (userHash === _AH.u && passHash === _AH.p) {
+        const token = crypto.getRandomValues(new Uint8Array(32));
+        const tokenHex = [...token].map(b => b.toString(16).padStart(2, '0')).join('');
+        localStorage.setItem('_adminSession', JSON.stringify({
+          token: tokenHex,
+          exp: Date.now() + SESSION_TTL
+        }));
+        _resetLoginAttempts();
+        return { ok: true };
+      }
     }
     _recordFailedLogin();
     if (_isLoginLocked()) return { ok: false, locked: true, seconds: _getLockRemainingSeconds() };
@@ -292,6 +319,7 @@
 
   function logoutAdmin() {
     localStorage.removeItem('_adminSession');
+    localStorage.removeItem('_adminJWT');
     location.hash = '#/';
   }
 
@@ -353,10 +381,21 @@
     if (isNaN(a1) || isNaN(a2) || isNaN(b1) || isNaN(b2)) return false;
     return a1 <= b2 && b1 <= a2;
   };
+  /** [V1] Get auth headers for direct fetch() calls to protected API endpoints */
+  function authHeaders(extra = {}) {
+    const h = { ...extra };
+    const jwt = localStorage.getItem('_adminJWT');
+    if (jwt) h['authorization'] = 'Bearer ' + jwt;
+    return h;
+  }
+
   async function apiFetch(path, options = {}) {
     const headers = options.headers ? { ...options.headers } : {};
     headers['accept'] = headers['accept'] || 'application/json';
     if (options.body && !headers['content-type']) headers['content-type'] = 'application/json';
+    // [V1] Attach JWT token for authenticated API calls
+    const jwt = localStorage.getItem('_adminJWT');
+    if (jwt && !headers['authorization']) headers['authorization'] = 'Bearer ' + jwt;
     // Avoid 304 cached responses in the embedded browser
     headers['cache-control'] = headers['cache-control'] || 'no-cache';
     const fetchOpts = { cache: 'no-store', ...options, headers };
@@ -3415,8 +3454,8 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
             if (!files.length) return;
             const fd = new FormData();
             files.forEach(f => fd.append('images', f));
-            await fetch(`${API_BASE}/api/cars/${car.id}/images`, { method: 'POST', body: fd }).then(r => r.json());
-            const fresh = await fetch(`${API_BASE}/api/cars/${car.id}`).then(r=>r.json());
+            await fetch(`${API_BASE}/api/cars/${car.id}/images`, { method: 'POST', body: fd, headers: authHeaders() }).then(r => r.json());
+            const fresh = await fetch(`${API_BASE}/api/cars/${car.id}`, { headers: authHeaders({ accept: 'application/json' }) }).then(r=>r.json());
             car.images = fresh.images || [];
             renderImages();
             e.target.value = '';
@@ -5681,7 +5720,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
         try {
           const res = await fetch(`${API_BASE}/api/policies/${sec.slug}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ title: sec.title, content: sec.defaultContent })
           });
           if (res.ok) {
@@ -5870,7 +5909,8 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
       try {
         const resp = await fetch(API_BASE + '/api/site-images/' + encodeURIComponent(key), {
           method: 'POST',
-          body: fd
+          body: fd,
+          headers: authHeaders()
         });
         if (!resp.ok) {
           const errData = await resp.json().catch(function() { return {}; });
@@ -6142,7 +6182,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
           try {
             const res = await fetch(`${API_BASE}/api/policies/${sec.slug}`, {
               method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
+              headers: authHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({ title: sec.title, content: sec.defaultContent })
             });
             if (res.ok) {
@@ -6189,7 +6229,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
           saveBtn.textContent = 'Запазване...';
           const res = await fetch(`${API_BASE}/api/policies/${currentSlug}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ title, content })
           });
           const saved = await res.json();

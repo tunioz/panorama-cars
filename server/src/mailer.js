@@ -429,7 +429,7 @@ async function sendReservationEmail({ reservation, invoice, company, policies })
     port: smtp.port,
     secure: smtp.port === 465,
     auth: { user: smtp.user, pass: smtp.pass },
-    tls: { rejectUnauthorized: false }
+    tls: { rejectUnauthorized: process.env.NODE_ENV === 'production' }
   });
 
   const invNumber = invoice?.number || 'proforma';
