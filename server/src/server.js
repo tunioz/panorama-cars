@@ -84,6 +84,111 @@ const upload = multer({
   }
 });
 
+// ─── File persistence: store uploads in PostgreSQL so they survive deploys ───
+async function fileSave(relPath, absPath, mime) {
+  try {
+    const data = fs.readFileSync(absPath);
+    await prisma.fileStore.upsert({
+      where: { path: relPath },
+      create: { path: relPath, data, mimeType: mime || 'image/jpeg' },
+      update: { data, mimeType: mime || 'image/jpeg' }
+    });
+  } catch (e) { console.error('[fileStore] save error:', relPath, e.message); }
+}
+async function fileDelete(relPath) {
+  try { await prisma.fileStore.delete({ where: { path: relPath } }); } catch {}
+}
+async function fileDeletePrefix(prefix) {
+  try { await prisma.fileStore.deleteMany({ where: { path: { startsWith: prefix } } }); } catch {}
+}
+// Restore all persisted files from DB to filesystem on startup
+async function restoreUploads() {
+  try {
+    const files = await prisma.fileStore.findMany();
+    let restored = 0;
+    for (const f of files) {
+      const abs = path.join(process.cwd(), f.path);
+      if (!fs.existsSync(abs)) {
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, f.data);
+        restored++;
+      }
+    }
+    if (restored > 0) console.log(`[fileStore] Restored ${restored} files from database`);
+    else if (files.length > 0) console.log(`[fileStore] All ${files.length} files already present on disk`);
+  } catch (e) { console.error('[fileStore] restore error:', e.message); }
+
+  // Seed default site images: ensure they exist on disk AND in FileStore
+  try {
+    const SITE_IMG_KEYS = [
+      'hero-bg', 'about-cars', 'cta-bg', 'about-hero-bg',
+      'about-video', 'memories-family',
+      'face-georgi', 'face-maria', 'face-petar'
+    ];
+    const frontendRoot = path.resolve(__dirname, '..', '..');
+    const siteDir = path.join(process.cwd(), 'uploads', 'site');
+    fs.mkdirSync(siteDir, { recursive: true });
+    let seeded = 0;
+    for (const key of SITE_IMG_KEYS) {
+      const relPath = `uploads/site/${key}.jpg`;
+      const destFile = path.join(siteDir, `${key}.jpg`);
+      // Check if already in FileStore
+      const inDb = await prisma.fileStore.findUnique({ where: { path: relPath } });
+      if (inDb) {
+        // Make sure it's also on disk
+        if (!fs.existsSync(destFile)) {
+          fs.writeFileSync(destFile, inDb.data);
+          seeded++;
+        }
+        continue;
+      }
+      // Not in DB — find a source file (uploads/site/ on disk OR git-tracked root copy)
+      let srcFile = null;
+      if (fs.existsSync(destFile)) {
+        srcFile = destFile;
+      } else {
+        const exts = ['.jpg', '.jpeg', '.png', '.webp', '.avif'];
+        for (const ext of exts) {
+          const candidate = path.join(frontendRoot, `${key}${ext}`);
+          if (fs.existsSync(candidate)) { srcFile = candidate; break; }
+        }
+      }
+      if (!srcFile) continue;
+      // Copy to uploads/site/ if not there
+      if (srcFile !== destFile) fs.copyFileSync(srcFile, destFile);
+      // Persist in FileStore so it survives deploys
+      await fileSave(relPath, destFile, 'image/jpeg');
+      seeded++;
+    }
+    if (seeded > 0) console.log(`[fileStore] Seeded ${seeded} site images into database`);
+  } catch (e) { console.error('[fileStore] site image seed error:', e.message); }
+
+  // Seed any existing car images on disk that are NOT yet in FileStore
+  try {
+    const carsDir = path.join(process.cwd(), 'uploads', 'cars');
+    if (fs.existsSync(carsDir)) {
+      let carSeeded = 0;
+      const carFolders = fs.readdirSync(carsDir, { withFileTypes: true }).filter(d => d.isDirectory());
+      for (const folder of carFolders) {
+        const folderPath = path.join(carsDir, folder.name);
+        const imgFiles = fs.readdirSync(folderPath).filter(f => /\.(jpg|jpeg|png|webp|avif)$/i.test(f));
+        for (const imgFile of imgFiles) {
+          const relPath = `uploads/cars/${folder.name}/${imgFile}`;
+          const absPath = path.join(folderPath, imgFile);
+          const exists = await prisma.fileStore.findUnique({ where: { path: relPath } });
+          if (!exists) {
+            await fileSave(relPath, absPath, 'image/jpeg');
+            carSeeded++;
+          }
+        }
+      }
+      if (carSeeded > 0) console.log(`[fileStore] Seeded ${carSeeded} existing car images into database`);
+    }
+  } catch (e) { console.error('[fileStore] car image seed error:', e.message); }
+}
+// Run restore on startup (non-blocking)
+restoreUploads();
+
 // Helpers
 function signJwt(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
@@ -392,6 +497,8 @@ app.delete('/api/cars/:id', auth('ADMIN'), async (req, res) => {
     const existing = await prisma.car.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Car not found' });
     await prisma.car.delete({ where: { id: req.params.id } });
+    // Remove persisted images from DB
+    await fileDeletePrefix(`uploads/cars/${req.params.id}/`);
     await logAction(null, 'car.delete', { id: req.params.id });
     res.status(204).end();
   } catch (e) {
@@ -425,10 +532,14 @@ app.post('/api/cars/:id/images', auth('ADMIN'), upload.array('images', 10), asyn
     try {
       await makeThumb(file.path, thumbAbs);
       existing.push({ large: `${dirRel}/${base}`, thumb: `${dirRel}/${thumbName}` });
+      // Persist both files to DB
+      await fileSave(`uploads/cars/${carId}/${base}`, file.path, file.mimetype);
+      await fileSave(`uploads/cars/${carId}/${thumbName}`, thumbAbs, 'image/jpeg');
     } catch (e) {
       // If thumbnail generation fails (e.g., unsupported HEIC), fall back to using the original as thumb
       console.error('Thumbnail generation failed, falling back to original:', e?.message || e);
       existing.push({ large: `${dirRel}/${base}`, thumb: `${dirRel}/${base}` });
+      await fileSave(`uploads/cars/${carId}/${base}`, file.path, file.mimetype);
     }
   }
   const updated = await prisma.car.update({ where: { id: carId }, data: { images: JSON.stringify(existing) } });
@@ -441,13 +552,15 @@ app.delete('/api/cars/:id/images', auth('ADMIN'), async (req, res) => {
   if (!car) return res.status(404).json({ error: 'Car not found' });
   const list = safeParse(car.images);
   const next = list.filter(img => img.large !== name && img.thumb !== name);
-  // Try removing files
+  // Try removing files from disk + DB
   const toRemove = list.filter(img => img.large === name || img.thumb === name);
   for (const img of toRemove) {
     for (const p of [img.large, img.thumb]) {
       if (!p) continue;
-      const abs = path.join(process.cwd(), p.replace(/^\//,''));
+      const rel = p.replace(/^\//, '');
+      const abs = path.join(process.cwd(), rel);
       fs.existsSync(abs) && fs.unlinkSync(abs);
+      await fileDelete(rel);
     }
   }
   await prisma.car.update({ where: { id: carId }, data: { images: JSON.stringify(next) } });
@@ -1139,6 +1252,11 @@ app.post('/api/site-images/:key', auth('ADMIN'), siteImgUpload.single('image'), 
   for (const old of oldFrontend) {
     try { fs.unlinkSync(path.join(frontendDir, old)); } catch {}
   }
+
+  // Persist to DB so it survives deploys
+  await fileSave(`uploads/site/${finalName}`, finalPath, 'image/jpeg');
+  // Also persist the frontend copy
+  await fileSave(finalName, frontendDest, 'image/jpeg');
 
   await logAction(null, 'site-image.upload', { key });
   res.json({ key, url: `/uploads/site/${finalName}` });

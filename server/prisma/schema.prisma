@@ -192,3 +192,12 @@ model Newsletter {
   email     String   @unique
   createdAt DateTime @default(now())
 }
+
+model FileStore {
+  id        String   @id @default(cuid())
+  path      String   @unique
+  data      Bytes
+  mimeType  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
