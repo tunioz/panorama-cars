@@ -2077,12 +2077,12 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
           Дати и локации
         </h3>
         <div class="grid-2" style="gap:14px;">
-          <div><div class="section-title">Място взимане</div><input id="wPick" class="input" value="${draft.pick || ''}" placeholder="Място"/></div>
-          <div><div class="section-title">Място връщане</div><input id="wDrop" class="input" value="${draft.drop || ''}" placeholder="Място"/></div>
+          <div><div class="section-title">Място взимане</div><input id="wPick" class="input" value="${draft.pick || ''}" placeholder="Място"/><span class="field-hint" data-hint="wPick">Въведете адрес или населено място</span></div>
+          <div><div class="section-title">Място връщане</div><input id="wDrop" class="input" value="${draft.drop || ''}" placeholder="Място"/><span class="field-hint" data-hint="wDrop">Въведете адрес или населено място</span></div>
         </div>
         <div class="grid-2" style="gap:14px; margin-top:14px;">
-          <div><div class="section-title">От</div><input id="wFrom" type="datetime-local" step="1800" class="input" value="${(draft.from || '').slice(0,16)}"/></div>
-          <div><div class="section-title">До</div><input id="wTo" type="datetime-local" step="1800" class="input" value="${(draft.to || '').slice(0,16)}"/></div>
+          <div><div class="section-title">От</div><input id="wFrom" type="datetime-local" step="1800" class="input" value="${(draft.from || '').slice(0,16)}"/><span class="field-hint" data-hint="wFrom">Изберете начална дата и час</span></div>
+          <div><div class="section-title">До</div><input id="wTo" type="datetime-local" step="1800" class="input" value="${(draft.to || '').slice(0,16)}"/><span class="field-hint" data-hint="wTo">Изберете крайна дата и час</span></div>
         </div>
         <div class="wz-actions">
           <button class="wz-btn-primary" id="next1">Напред →</button>
@@ -2097,12 +2097,12 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
           Данни на шофьора
         </h3>
         <div class="grid-2" style="gap:14px;">
-          <div><div class="section-title">Име и фамилия</div><input id="dName" class="input" value="${draft.driver?.name || ''}"/></div>
-          <div><div class="section-title">Телефон</div><input id="dPhone" class="input" value="${draft.driver?.phone || ''}"/></div>
+          <div><div class="section-title">Име и фамилия</div><input id="dName" class="input" value="${draft.driver?.name || ''}"/><span class="field-hint" data-hint="dName">Поне 2 думи</span></div>
+          <div><div class="section-title">Телефон</div><input id="dPhone" class="input" value="${draft.driver?.phone || ''}"/><span class="field-hint" data-hint="dPhone">Телефонен номер (поне 7 цифри)</span></div>
         </div>
         <div class="grid-2" style="gap:14px; margin-top:14px;">
-          <div><div class="section-title">Имейл</div><input id="dEmail" class="input" value="${draft.driver?.email || ''}"/></div>
-          <div><div class="section-title">№ шофьорска книжка</div><input id="dLicense" class="input" value="${draft.driver?.license || ''}"/></div>
+          <div><div class="section-title">Имейл</div><input id="dEmail" class="input" value="${draft.driver?.email || ''}"/><span class="field-hint" data-hint="dEmail">Валиден имейл адрес</span></div>
+          <div><div class="section-title">№ шофьорска книжка</div><input id="dLicense" class="input" value="${draft.driver?.license || ''}"/><span class="field-hint" data-hint="dLicense">Номер от книжката (поне 5 символа)</span></div>
         </div>
         <div class="wz-actions wz-actions-between">
           <button class="wz-btn-secondary" id="back1">← Назад</button>
@@ -2163,32 +2163,32 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
         </div>
         <div id="invIndividual" style="display:${inv.type!=='company'?'grid':'none'}; gap:14px; margin-top:16px;">
           <div class="grid-2" style="gap:14px;">
-            <div><div class="section-title">Име и фамилия</div><input id="iNameInd" class="input" value="${(inv.name) || draft.driver?.name || ''}"/></div>
-            <div><div class="section-title">ЕГН</div><input id="iEgn" class="input" value="${inv.egn || ''}"/></div>
+            <div><div class="section-title">Име и фамилия</div><input id="iNameInd" class="input" value="${(inv.name) || draft.driver?.name || ''}"/><span class="field-hint" data-hint="iNameInd">Поне 2 думи</span></div>
+            <div><div class="section-title">ЕГН</div><input id="iEgn" class="input" value="${inv.egn || ''}"/><span class="field-hint" data-hint="iEgn">Точно 10 цифри</span></div>
           </div>
           <div class="grid-2" style="gap:14px;">
-            <div><div class="section-title">Адрес</div><input id="iAddrInd" class="input" value="${inv.addr || ''}"/></div>
-            <div><div class="section-title">Имейл</div><input id="iEmailInd" class="input" value="${inv.email || draft.driver?.email || ''}"/></div>
+            <div><div class="section-title">Адрес</div><input id="iAddrInd" class="input" value="${inv.addr || ''}"/><span class="field-hint" data-hint="iAddrInd">Поне 5 символа</span></div>
+            <div><div class="section-title">Имейл</div><input id="iEmailInd" class="input" value="${inv.email || draft.driver?.email || ''}"/><span class="field-hint" data-hint="iEmailInd">Валиден имейл адрес</span></div>
           </div>
         </div>
 
         <div id="invCompany" style="display:${inv.type==='company'?'grid':'none'}; gap:14px; margin-top:16px;">
           <div class="grid-2" style="gap:14px;">
-            <div><div class="section-title">Име на фирмата</div><input id="iNameCo" class="input" value="${inv.name || ''}"/></div>
-            <div><div class="section-title">ЕИК</div><input id="iNumCo" class="input" value="${inv.num || ''}"/></div>
+            <div><div class="section-title">Име на фирмата</div><input id="iNameCo" class="input" value="${inv.name || ''}"/><span class="field-hint" data-hint="iNameCo">Пълно наименование (поне 2 символа)</span></div>
+            <div><div class="section-title">ЕИК</div><input id="iNumCo" class="input" value="${inv.num || ''}"/><span class="field-hint" data-hint="iNumCo">9 или 13 цифри</span></div>
           </div>
           <div class="grid-2" style="gap:14px;">
-            <div><div class="section-title">ДДС №</div><input id="iVatCo" class="input" value="${inv.vat || ''}"/></div>
-            <div><div class="section-title">МОЛ</div><input id="iMolCo" class="input" value="${inv.mol || ''}"/></div>
+            <div><div class="section-title">ДДС №</div><input id="iVatCo" class="input" value="${inv.vat || ''}"/><span class="field-hint" data-hint="iVatCo">По избор – BG + 9-10 цифри</span></div>
+            <div><div class="section-title">МОЛ</div><input id="iMolCo" class="input" value="${inv.mol || ''}"/><span class="field-hint" data-hint="iMolCo">Поне 2 думи</span></div>
           </div>
           <div class="grid-2" style="gap:14px;">
-            <div><div class="section-title">Адрес</div><input id="iAddrCo" class="input" value="${inv.addr || ''}"/></div>
-            <div><div class="section-title">Имейл</div><input id="iEmailCo" class="input" value="${inv.email || ''}"/></div>
+            <div><div class="section-title">Адрес</div><input id="iAddrCo" class="input" value="${inv.addr || ''}"/><span class="field-hint" data-hint="iAddrCo">Поне 5 символа</span></div>
+            <div><div class="section-title">Имейл</div><input id="iEmailCo" class="input" value="${inv.email || ''}"/><span class="field-hint" data-hint="iEmailCo">Валиден имейл адрес</span></div>
           </div>
           <div class="grid-3" style="gap:14px;">
-            <div><div class="section-title">Банка</div><input id="iBankCo" class="input" value="${inv.bank || ''}"/></div>
-            <div><div class="section-title">IBAN</div><input id="iIbanCo" class="input" value="${inv.iban || ''}"/></div>
-            <div><div class="section-title">BIC</div><input id="iBicCo" class="input" value="${inv.bic || ''}"/></div>
+            <div><div class="section-title">Банка</div><input id="iBankCo" class="input" value="${inv.bank || ''}"/><span class="field-hint" data-hint="iBankCo">По избор – поне 3 символа</span></div>
+            <div><div class="section-title">IBAN</div><input id="iIbanCo" class="input" value="${inv.iban || ''}"/><span class="field-hint" data-hint="iIbanCo">По избор – BG + 20 знака</span></div>
+            <div><div class="section-title">BIC</div><input id="iBicCo" class="input" value="${inv.bic || ''}"/><span class="field-hint" data-hint="iBicCo">По избор – 8 или 11 символа</span></div>
           </div>
         </div>
         <div class="wz-actions wz-actions-between">
@@ -2251,6 +2251,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
     const clearErrors = () => {
       $$('.err-msg', d).forEach(n => n.remove());
       $$('.error', d).forEach(n => n.classList.remove('error'));
+      $$('.hint-error', d).forEach(n => n.classList.remove('hint-error'));
     };
     const setError = (inputEl, msg) => {
       if (!inputEl) return;
@@ -2312,10 +2313,16 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
       const validateStep1 = () => {
         clearErrors();
         let ok = true;
-        if (!$('#wPick').value.trim()) { setError($('#wPick'), 'Въведете място за взимане'); ok = false; }
-        if (!$('#wDrop').value.trim()) { setError($('#wDrop'), 'Въведете място за връщане'); ok = false; }
-        if (!$('#wFrom').value) { setError($('#wFrom'), 'Изберете дата и час'); ok = false; }
-        if (!$('#wTo').value) { setError($('#wTo'), 'Изберете дата и час'); ok = false; }
+        const markField = (el) => {
+          if (!el) return;
+          el.classList.add('error');
+          const hint = el.parentElement?.querySelector('.field-hint');
+          if (hint) hint.classList.add('hint-error');
+        };
+        if (!$('#wPick').value.trim()) { markField($('#wPick')); ok = false; }
+        if (!$('#wDrop').value.trim()) { markField($('#wDrop')); ok = false; }
+        if (!$('#wFrom').value) { markField($('#wFrom')); ok = false; }
+        if (!$('#wTo').value) { markField($('#wTo')); ok = false; }
         if (!ok) scrollToError();
         return ok;
       };
@@ -2323,6 +2330,16 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
       $('#wDrop').value = draft.drop || '';
       $('#wFrom').value = (draft.from || '').slice(0,16);
       $('#wTo').value = (draft.to || '').slice(0,16);
+      // Clear error state on input
+      ['#wPick','#wDrop','#wFrom','#wTo'].forEach(sel => {
+        const el = $(sel);
+        if (!el) return;
+        el.addEventListener('input', () => {
+          el.classList.remove('error');
+          const hint = el.parentElement?.querySelector('.field-hint');
+          if (hint) hint.classList.remove('hint-error');
+        });
+      });
       const bindDateSnap = (el, key) => {
         if (!el) return;
         const apply = () => { const v = snapMinutesLocal(el.value); el.value = v; draft[key] = v; };
@@ -2350,23 +2367,19 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
       const errorMessages = {
         name: {
           empty: "Моля, въведете име и фамилия",
-          invalid: "Моля, въведете валидно име на кирилица (поне 2 думи)",
-          tooShort: "Всяко име трябва да съдържа поне 2 букви"
+          invalid: "Въведете поне 2 думи"
         },
         phone: {
           empty: "Моля, въведете телефонен номер",
-          invalid: "Моля, въведете валиден български мобилен номер (087/088/089)",
-          wrongFormat: "Форматът трябва да бъде: 0879123456"
+          wrongFormat: "Номерът трябва да съдържа поне 7 цифри"
         },
         email: {
           empty: "Моля, въведете имейл адрес",
-          invalid: "Моля, въведете валиден имейл адрес",
-          wrongFormat: "Форматът трябва да бъде: example@domain.com"
+          invalid: "Моля, въведете валиден имейл адрес"
         },
         license: {
           empty: "Моля, въведете номер на шофьорска книжка",
-          invalid: "Моля, въведете валиден номер (9 цифри)",
-          wrongLength: "Номерът трябва да съдържа точно 9 цифри"
+          wrongLength: "Поне 5 символа"
         }
       };
 
@@ -2376,19 +2389,15 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
         const holder = inputEl.parentElement || inputEl;
         const msgEl = holder.querySelector('.err-msg');
         if (msgEl) msgEl.remove();
+        const hintEl = holder.querySelector('.field-hint');
         inputEl.classList.remove('error','valid');
+        if (hintEl) hintEl.classList.remove('hint-error');
         if (res?.ok) {
-          if (res.value !== undefined) inputEl.value = res.value;
           inputEl.classList.add('valid');
         } else {
-          inputEl.classList.remove('valid');
-          inputEl.classList.remove('error');
-          if (showError && res?.message) {
+          if (showError) {
             inputEl.classList.add('error');
-            const m = document.createElement('span');
-            m.className = 'err-msg';
-            m.textContent = res.message;
-            holder.appendChild(m);
+            if (hintEl) hintEl.classList.add('hint-error');
           }
         }
       };
@@ -2397,21 +2406,15 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
         name(val) {
           const v = normSpaces(val);
           if (!v) return { ok:false, err:'empty', value:'' };
-          const re = /^[А-Яа-яЁёЪъЬьЮюЯяЩщШшЧчЦцЙйѝІіҐґЇї\- ]+$/u;
-          if (!re.test(v)) return { ok:false, err:'invalid', value:v };
           const parts = v.split(' ').filter(Boolean);
           if (parts.length < 2) return { ok:false, err:'invalid', value:v };
-          if (parts.some(p => p.replace(/-/g,'').length < 2)) return { ok:false, err:'tooShort', value:v };
           return { ok:true, value:v };
         },
         phone(val) {
           const digits = (val || '').replace(/\D/g, '');
           if (!digits) return { ok:false, err:'empty', value:'' };
-          if (!/^0(87|88|89)\d{7}$/.test(digits)) {
-            const err = digits.length === 10 ? 'invalid' : 'wrongFormat';
-            return { ok:false, err, value:digits };
-          }
-          return { ok:true, value:digits };
+          if (digits.length < 7) return { ok:false, err:'wrongFormat', value:val.trim() };
+          return { ok:true, value:val.trim() };
         },
         email(val) {
           const v = normSpaces(val).toLowerCase();
@@ -2421,11 +2424,10 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
           return { ok:true, value:v };
         },
         license(val) {
-          const digits = (val || '').replace(/\D/g, '');
-          if (!digits) return { ok:false, err:'empty', value:'' };
-          if (digits.length !== 9) return { ok:false, err:'wrongLength', value:digits };
-          if (!/^\d{9}$/.test(digits)) return { ok:false, err:'invalid', value:digits };
-          return { ok:true, value:digits };
+          const v = (val || '').trim();
+          if (!v) return { ok:false, err:'empty', value:'' };
+          if (v.length < 5) return { ok:false, err:'wrongLength', value:v };
+          return { ok:true, value:v };
         }
       };
 
@@ -2464,19 +2466,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
       };
 
       const updateNextBtn = () => {
-        const res = validateAll(false);
-        const btn = $('#next2');
-        if (btn) {
-          btn.disabled = !res.ok;
-          const errors = Object.keys(fields).map(k => {
-            const r = validators[k](fields[k]?.value || '');
-            if (r.ok) return null;
-            const msg = errorMessages[k][r.err] || errorMessages[k].invalid;
-            return `${fieldLabels[k]}: ${msg}`;
-          }).filter(Boolean);
-          if (errors.length) btn.title = errors.join('\n');
-          else btn.removeAttribute('title');
-        }
+        // Button always enabled — errors shown on click
       };
 
       Object.entries(fields).forEach(([k, input]) => {
@@ -2492,7 +2482,6 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
         });
       });
 
-      $('#next2')?.setAttribute('disabled','disabled');
       $('#back1')?.addEventListener('click', () => gotoStep(1));
       $('#next2')?.addEventListener('click', () => {
         const res = validateAll(true);
@@ -2544,27 +2533,24 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
         const holder = inputEl.parentElement || inputEl;
         const msgEl = holder.querySelector('.err-msg');
         if (msgEl) msgEl.remove();
+        const hintEl = holder.querySelector('.field-hint');
         inputEl.classList.remove('error','valid');
+        if (hintEl) hintEl.classList.remove('hint-error');
         if (res?.ok) {
-          if (res.value !== undefined) inputEl.value = res.value;
           if (res.value !== '') inputEl.classList.add('valid');
-        } else if (showError && res?.message) {
+        } else if (showError) {
           inputEl.classList.add('error');
-          const m = document.createElement('span');
-          m.className = 'err-msg';
-          m.textContent = res.message;
-          holder.appendChild(m);
+          if (hintEl) hintEl.classList.add('hint-error');
         }
       };
       const errorMessagesInv = {
         name: {
           empty: 'Моля, въведете име и фамилия',
-          invalid: 'Моля, въведете валидно име на кирилица (поне 2 думи)',
-          tooShort: 'Всяко име трябва да съдържа поне 2 букви'
+          invalid: 'Въведете поне 2 думи'
         },
         company: {
           empty: 'Моля, въведете име на фирмата',
-          invalid: 'Моля, въведете пълно име с правна форма (ООД/ЕООД/АД/ЕАД/СД/КД/ЕТ/ДП)'
+          invalid: 'Поне 2 символа'
         },
         egn: {
           empty: 'Моля, въведете ЕГН',
@@ -2578,28 +2564,28 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
           invalidChecksum: 'Невалидна контролна сума на ЕИК'
         },
         vat: {
-          invalid: 'Моля, въведете валиден ДДС номер (BG + 9 или 10 цифри)'
+          invalid: 'BG + 9 или 10 цифри'
         },
         mol: {
           empty: 'Моля, въведете име на представляващо лице',
-          invalid: 'Моля, въведете валидно име на кирилица (поне 2 думи)'
+          invalid: 'Въведете поне 2 думи'
         },
         addr: {
           empty: 'Моля, въведете адрес',
-          invalid: 'Адресът трябва да е поне 10 символа и да съдържа улица/номер'
+          invalid: 'Поне 5 символа'
         },
         email: {
           empty: 'Моля, въведете имейл адрес',
           invalid: 'Моля, въведете валиден имейл адрес'
         },
         bank: {
-          invalid: 'Името на банката трябва да е поне 3 символа'
+          invalid: 'Поне 3 символа'
         },
         iban: {
-          invalid: 'Моля, въведете валиден IBAN (BG + 20 знака)'
+          invalid: 'BG + 20 знака'
         },
         bic: {
-          invalid: 'Моля, въведете валиден BIC (8 или 11 символа, съдържащ BG)'
+          invalid: '8 или 11 символа'
         },
         bankDeps: {
           missingIban: 'IBAN е задължителен при попълнена банка',
@@ -2611,18 +2597,14 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
         fullName(v) {
           const val = normSpaces(v);
           if (!val) return { ok:false, err:'empty', value:'' };
-          const re = /^[А-Яа-яЁёЪъЬьЮюЯяЩщШшЧчЦцЙйѝІіҐґЇї\- ]+$/u;
-          if (!re.test(val)) return { ok:false, err:'invalid', value:val };
           const parts = val.split(' ').filter(Boolean);
           if (parts.length < 2) return { ok:false, err:'invalid', value:val };
-          if (parts.some(p => p.replace(/-/g,'').length < 2)) return { ok:false, err:'tooShort', value:val };
           return { ok:true, value:val };
         },
         companyName(v) {
           const val = normSpaces(v);
           if (!val) return { ok:false, err:'empty', value:'' };
-          const suffixRe = /(ООД|ЕООД|АД|ЕАД|СД|КД|ЕТ|ДП|OOD|EOOD|AD|EAD|SD|KD|ET|DP)$/i;
-          if (val.length < 3 || !suffixRe.test(val)) return { ok:false, err:'invalid', value:val };
+          if (val.length < 2) return { ok:false, err:'invalid', value:val };
           return { ok:true, value:val };
         },
         egn(v) {
@@ -2685,9 +2667,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
         address(v) {
           const val = normSpaces(v);
           if (!val) return { ok:false, err:'empty', value:'' };
-          if (val.length < 10 || !/[0-9]/.test(val) || !/(ул\.|бул\.|пл\.|str|street|bul)/i.test(val)) {
-            return { ok:false, err:'invalid', value:val };
-          }
+          if (val.length < 5) return { ok:false, err:'invalid', value:val };
           return { ok:true, value:val };
         },
         email(v) {
@@ -2841,14 +2821,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
       };
 
       const updateConfirmBtn = () => {
-        const res = validateInvoice(false);
-        const btn = $('#nextToTerms');
-        if (btn) {
-          btn.disabled = !res.ok;
-          const errors = collectErrorMessages();
-          if (!res.ok && errors.length) btn.title = errors.join('\n');
-          else btn.removeAttribute('title');
-        }
+        // Button always enabled — errors shown on click
       };
 
       Object.keys(fieldsInv.individual).forEach(k => bindInvField('individual', k));
@@ -2864,7 +2837,6 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
         updateConfirmBtn();
       });
       $('#backToExtras')?.addEventListener('click', () => gotoStep(3));
-      $('#nextToTerms')?.setAttribute('disabled','disabled');
       $('#nextToTerms')?.addEventListener('click', async () => {
         const res = validateInvoice(true);
         if (!res.ok) return;
@@ -2901,9 +2873,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
     if (step === 5) {
       const allBoxes = ['#chkTerms','#chkCancel','#chkInsurancePol','#chkPrivacy'];
       const updateTermsBtn = () => {
-        const allChecked = allBoxes.every(sel => $(sel)?.checked);
-        const btn = $('#confirm');
-        if (btn) btn.disabled = !allChecked;
+        // Button always enabled — errors shown on click
         const err = $('#termsError');
         if (err) err.style.display = 'none';
       };
