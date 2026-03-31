@@ -433,23 +433,33 @@ async function sendReservationEmail({ reservation, invoice, company, policies })
   });
 
   const invNumber = invoice?.number || 'proforma';
-  try {
-    const info = await transporter.sendMail({
-      from: `"${companyName}" <${smtp.from}>`,
-      to: driverEmail,
-      subject,
-      html: htmlBody,
-      attachments: [{
-        filename: `${invNumber}.pdf`,
-        content: pdfBuffer,
-        contentType: 'application/pdf'
-      }]
-    });
-    console.log(`[mailer] Email sent to ${driverEmail}, messageId=${info.messageId}`);
-    return { sent: true, messageId: info.messageId };
-  } catch (err) {
-    console.error('[mailer] Send failed:', err.message);
-    return { sent: false, reason: err.message };
+  const mailOptions = {
+    from: `"${companyName}" <${smtp.from}>`,
+    to: driverEmail,
+    subject,
+    html: htmlBody,
+    attachments: [{
+      filename: `${invNumber}.pdf`,
+      content: pdfBuffer,
+      contentType: 'application/pdf'
+    }]
+  };
+
+  // Retry up to 3 times with exponential backoff
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const info = await transporter.sendMail(mailOptions);
+      console.log(`[mailer] Email sent to ${driverEmail}, messageId=${info.messageId}${attempt > 1 ? ` (attempt ${attempt})` : ''}`);
+      return { sent: true, messageId: info.messageId };
+    } catch (err) {
+      console.error(`[mailer] Send attempt ${attempt}/${MAX_RETRIES} failed:`, err.message);
+      if (attempt < MAX_RETRIES) {
+        await new Promise(r => setTimeout(r, attempt * 2000)); // 2s, 4s backoff
+      } else {
+        return { sent: false, reason: err.message, attempts: MAX_RETRIES };
+      }
+    }
   }
 }
 

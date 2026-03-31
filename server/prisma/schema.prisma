@@ -22,8 +22,8 @@ model Car {
   model        String
   trim         String?
   year         Int?
-  pricePerHour Float
-  pricePerDay  Float?
+  pricePerHour Decimal       @db.Decimal(10,2)
+  pricePerDay  Decimal?      @db.Decimal(10,2)
   bodyStyle    String?
   transmission String?
   fuel         String?
@@ -31,6 +31,7 @@ model Car {
   images       String?
   type         String?
   status       String        @default("AVAILABLE")
+  deletedAt    DateTime?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   params       CarParamValue[]
@@ -38,6 +39,7 @@ model Car {
 
   @@index([status])
   @@index([brand])
+  @@index([deletedAt])
 }
 
 model CarParamDef {
@@ -92,9 +94,10 @@ model Reservation {
   extraDriver   Boolean  @default(false)
   insurance     Boolean  @default(false)
   status     String             @default("REQUESTED")
-  total      Float?
-  ratePerDay Float?
+  total      Decimal?           @db.Decimal(10,2)
+  ratePerDay Decimal?           @db.Decimal(10,2)
   currency   String   @default("EUR")
+  deletedAt  DateTime?
   createdAt  DateTime           @default(now())
   invoices   Invoice[]
 
@@ -102,6 +105,7 @@ model Reservation {
   @@index([status])
   @@index([from])
   @@index([to])
+  @@index([deletedAt])
 }
 
 model Invoice {
@@ -139,14 +143,16 @@ model Invoice {
   buyerIban       String?
   buyerBic        String?
   items           String?
-  subtotal        Float?
-  vatAmount       Float?
-  total           Float?
+  subtotal        Decimal?     @db.Decimal(10,2)
+  vatAmount       Decimal?     @db.Decimal(10,2)
+  total           Decimal?     @db.Decimal(10,2)
+  deletedAt       DateTime?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
   @@index([reservationId])
   @@index([type])
+  @@index([deletedAt])
 }
 
 model Log {
@@ -184,8 +190,8 @@ model CompanyInfo {
   bic       String?
   proStart  Int      @default(1)
   invStart  Int      @default(1)
-  extraDriverPrice Float?   @default(10)
-  insurancePrice   Float?   @default(15)
+  extraDriverPrice Decimal?  @db.Decimal(10,2) @default(10)
+  insurancePrice   Decimal?  @db.Decimal(10,2) @default(15)
   smtpHost  String?
   smtpPort  Int?     @default(587)
   smtpUser  String?

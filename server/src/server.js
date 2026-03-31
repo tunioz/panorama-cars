@@ -236,8 +236,28 @@ function cleanDesc(d) {
   return d.trim();
 }
 
-// Round to 2 decimal places (safe for financial calculations with Float)
+// Round to 2 decimal places (safe for financial calculations)
 function round2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+// Convert Prisma Decimal to plain number (Decimal fields return objects/strings)
+function toNum(v) { return v === null || v === undefined ? 0 : Number(v); }
+// Normalize Decimal fields to numbers in API responses
+function normalizeCar(c) {
+  return { ...c, pricePerHour: toNum(c.pricePerHour), pricePerDay: c.pricePerDay != null ? toNum(c.pricePerDay) : null, images: safeParse(c.images) };
+}
+function normalizeReservation(r) {
+  return { ...r, total: r.total != null ? toNum(r.total) : null, ratePerDay: r.ratePerDay != null ? toNum(r.ratePerDay) : null,
+    invoices: (r.invoices || []).map(normalizeInvoice), car: r.car ? normalizeCar(r.car) : r.car };
+}
+function normalizeInvoice(inv) {
+  return { ...inv, subtotal: inv.subtotal != null ? toNum(inv.subtotal) : null, vatAmount: inv.vatAmount != null ? toNum(inv.vatAmount) : null,
+    total: inv.total != null ? toNum(inv.total) : null, items: safeParse(inv.items),
+    reservation: inv.reservation ? normalizeReservation(inv.reservation) : inv.reservation };
+}
+function normalizeCompany(info) {
+  if (!info) return null;
+  return { ...info, extraDriverPrice: info.extraDriverPrice != null ? toNum(info.extraDriverPrice) : null,
+    insurancePrice: info.insurancePrice != null ? toNum(info.insurancePrice) : null };
+}
 
 // Sanitize HTML — strip dangerous tags/attributes, keep safe formatting
 function sanitizeHtml(html) {
@@ -349,13 +369,13 @@ async function _createInvoiceInTx(tx, reservation, type, companyCache) {
   const issueDate = new Date();
   const number = await generateInvoiceNumber(type, issueDate, { proStart: company?.proStart, invStart: company?.invStart }, tx);
   const days = Math.max(1, Math.ceil((new Date(reservation.to) - new Date(reservation.from)) / 86400000));
-  const extraDriverRate = Number(company?.extraDriverPrice || 10);
-  const insuranceRate = Number(company?.insurancePrice || 15);
+  const extraDriverRate = toNum(company?.extraDriverPrice) || 10;
+  const insuranceRate = toNum(company?.insurancePrice) || 15;
   // For existing invoices, recalculate rate from total minus extras
-  let baseTotal = Number(reservation.total || 0);
+  let baseTotal = toNum(reservation.total);
   if (reservation.extraDriver) baseTotal -= extraDriverRate * days;
   if (reservation.insurance) baseTotal -= insuranceRate * days;
-  const rate = reservation.ratePerDay || (baseTotal && days ? baseTotal / days : Number(car?.pricePerDay || 0));
+  const rate = toNum(reservation.ratePerDay) || (baseTotal && days ? baseTotal / days : toNum(car?.pricePerDay));
   const rawItems = [{
     description: `Наем на автомобил ${car?.brand||reservation.car?.brand||''} ${car?.model||reservation.car?.model||''}`.trim(),
     qty: days,
@@ -461,12 +481,31 @@ app.post('/auth/login', authLimiter, async (req, res) => {
   res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
 });
 
+// Password change
+app.post('/auth/change-password', auth(), async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Both currentPassword and newPassword are required' });
+    if (newPassword.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!ok) return res.status(401).json({ error: 'Current password is incorrect' });
+    const hash = await bcrypt.hash(newPassword, 12);
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: hash } });
+    await logAction(user.id, 'auth.password-change', {});
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[POST /auth/change-password]', e?.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Cars
 app.get('/api/cars', publicReadLimiter, async (req, res) => {
   try {
-    const list = await prisma.car.findMany({ orderBy: { createdAt: 'desc' } });
-    const normalized = list.map(c => ({ ...c, images: safeParse(c.images) }));
-    res.json(normalized);
+    const list = await prisma.car.findMany({ where: { deletedAt: null }, orderBy: { createdAt: 'desc' } });
+    res.json(list.map(normalizeCar));
   } catch (e) {
     console.error('[GET /api/cars]', e?.message);
     res.status(500).json({ error: 'Server error' });
@@ -476,7 +515,7 @@ app.get('/api/cars/:id', publicReadLimiter, async (req, res) => {
   try {
     const c = await prisma.car.findUnique({ where: { id: req.params.id } });
     if (!c) return res.status(404).json({ error: 'Not found' });
-    res.json({ ...c, images: safeParse(c.images) });
+    res.json(normalizeCar(c));
   } catch (e) {
     console.error('[GET /api/cars/:id]', e?.message);
     res.status(500).json({ error: 'Server error' });
@@ -531,16 +570,24 @@ app.put('/api/cars/:id', auth('ADMIN'), async (req, res) => {
 });
 app.delete('/api/cars/:id', auth('ADMIN'), async (req, res) => {
   try {
-    const existing = await prisma.car.findUnique({ where: { id: req.params.id } });
+    const existing = await prisma.car.findUnique({ where: { id: req.params.id }, include: { reservations: { include: { invoices: true } } } });
     if (!existing) return res.status(404).json({ error: 'Car not found' });
+    // Check if car has invoices — prevent deletion to preserve tax records
+    const hasInvoices = existing.reservations?.some(r => r.invoices?.length > 0);
+    if (hasInvoices) {
+      // Soft delete — mark as deleted but preserve data for tax compliance
+      await prisma.car.update({ where: { id: req.params.id }, data: { deletedAt: new Date(), status: 'DELETED' } });
+      await logAction(null, 'car.soft-delete', { id: req.params.id, reason: 'has invoices' });
+      return res.status(204).end();
+    }
+    // No invoices — safe to hard delete
     await prisma.car.delete({ where: { id: req.params.id } });
-    // Remove persisted images from DB
     await fileDeletePrefix(`uploads/cars/${req.params.id}/`);
     await logAction(null, 'car.delete', { id: req.params.id });
     res.status(204).end();
   } catch (e) {
     console.error('[DELETE /api/cars/:id]', e?.message || e);
-    if (!res.headersSent) res.status(500).json({ error: e.message || 'Server error' });
+    if (!res.headersSent) res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -692,8 +739,9 @@ app.put('/api/cars/:id/params', auth('ADMIN'), async (req, res) => {
 // Reservations
 app.get('/api/reservations', auth('ADMIN'), async (req, res) => {
   const list = await prisma.reservation.findMany({
+    where: { deletedAt: null },
     orderBy: { createdAt: 'desc' },
-    include: { car: true, invoices: true }
+    include: { car: true, invoices: { where: { deletedAt: null } } }
   });
   await normalizeReservationExpiry(list);
   await ensureInvoicesForPaidReservations();
@@ -710,7 +758,7 @@ app.get('/api/reservations', auth('ADMIN'), async (req, res) => {
       }
     }
   }
-  res.json(list);
+  res.json(list.map(normalizeReservation));
 });
 app.post('/api/reservations', apiWriteLimiter, async (req, res) => {
   const data = req.body;
@@ -739,7 +787,7 @@ app.post('/api/reservations', apiWriteLimiter, async (req, res) => {
   const nextSeq = (maxSeq._max.seq || 0) + 1;
   const car = await prisma.car.findUnique({ where: { id: data.carId } });
   if (!car) return res.status(400).json({ error: 'Car not found' });
-  const rate = Number(car?.pricePerDay || 0);
+  const rate = toNum(car?.pricePerDay);
   const fromDt = new Date(data.from);
   const toDt = new Date(data.to);
   // [V7] Date overlap check — prevent double booking on the server
@@ -760,8 +808,8 @@ app.post('/api/reservations', apiWriteLimiter, async (req, res) => {
   const company = await prisma.companyInfo.findFirst();
   const wantsExtraDriver = !!data.extraDriver;
   const wantsInsurance = !!data.insurance;
-  const extraDriverRate = Number(company?.extraDriverPrice || 10);
-  const insuranceRate = Number(company?.insurancePrice || 15);
+  const extraDriverRate = toNum(company?.extraDriverPrice) || 10;
+  const insuranceRate = toNum(company?.insurancePrice) || 15;
   let total = round2(rate * days);
   if (wantsExtraDriver) total = round2(total + extraDriverRate * days);
   if (wantsInsurance) total = round2(total + insuranceRate * days);
@@ -839,7 +887,7 @@ app.get('/api/reservations/:id', auth('ADMIN'), async (req, res) => {
       } catch (e) { /* ignore */ }
     }
   }
-  res.json(reservation);
+  res.json(normalizeReservation(reservation));
 });
 
 // Download proforma PDF for a reservation
@@ -900,14 +948,13 @@ app.get('/api/invoices', auth('ADMIN'), async (req, res) => {
   // Уверяваме се, че платените резервации имат фактура
   await ensureInvoicesForPaidReservations();
   const reservationId = req.query.reservationId;
-  const where = reservationId ? { reservationId: String(reservationId) } : {};
+  const where = { deletedAt: null, ...(reservationId ? { reservationId: String(reservationId) } : {}) };
   const list = await prisma.invoice.findMany({
     where,
     orderBy: { issueDate: 'desc' },
     include: { reservation: { include: { car: true } } }
   });
-  const mapped = list.map(inv => ({ ...inv, items: safeParse(inv.items) }));
-  res.json(mapped);
+  res.json(list.map(normalizeInvoice));
 });
 app.get('/api/invoices/:id', auth('ADMIN'), async (req, res) => {
   const inv = await prisma.invoice.findUnique({
@@ -915,7 +962,7 @@ app.get('/api/invoices/:id', auth('ADMIN'), async (req, res) => {
     include: { reservation: { include: { car: true } } }
   });
   if (!inv) return res.status(404).json({ error: 'Not found' });
-  res.json({ ...inv, items: safeParse(inv.items) });
+  res.json(normalizeInvoice(inv));
 });
 app.post('/api/invoices', auth('ADMIN'), async (req, res) => {
   const body = req.body || {};
@@ -930,7 +977,7 @@ app.post('/api/invoices', auth('ADMIN'), async (req, res) => {
   let items = normalizeItems(body.items);
   if (!items.length) {
     const days = Math.max(1, Math.ceil((new Date(reservation.to) - new Date(reservation.from)) / 86400000));
-    const unitPrice = reservation.total && days ? reservation.total / days : reservation.car?.pricePerDay || 0;
+    const unitPrice = toNum(reservation.total) && days ? toNum(reservation.total) / days : toNum(reservation.car?.pricePerDay);
     items = normalizeItems([{
       description: `Наем на автомобил ${reservation.car?.brand || ''} ${reservation.car?.model || ''}`.trim(),
       qty: days,
@@ -1088,15 +1135,16 @@ app.delete('/api/locations/:id', auth('ADMIN'), async (req, res) => {
 // Company info
 app.get('/api/company', publicReadLimiter, async (req, res) => {
   const info = await prisma.companyInfo.findFirst();
-  if (info) {
+  const normalized = normalizeCompany(info);
+  if (normalized) {
     // [V4] Never expose SMTP settings or internals to public frontend
-    info.smtpPass = info.smtpPass ? '••••••••' : null;
-    info.smtpHost = undefined;
-    info.smtpPort = undefined;
-    info.smtpUser = undefined;
-    info.smtpFrom = undefined;
+    normalized.smtpPass = normalized.smtpPass ? '••••••••' : null;
+    normalized.smtpHost = undefined;
+    normalized.smtpPort = undefined;
+    normalized.smtpUser = undefined;
+    normalized.smtpFrom = undefined;
   }
-  res.json(info || null);
+  res.json(normalized);
 });
 app.put('/api/company', auth('ADMIN'), async (req, res) => {
   const body = req.body || {};
