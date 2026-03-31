@@ -1186,7 +1186,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
       <!-- ABOUT -->
       <section class="about-section" id="about">
         <div class="about-inner">
-          <div class="about-img"><img src="/uploads/site/about-cars.jpg" onerror="this.src='about-cars.jpg'" alt="Паркинг с луксозни автомобили под наем" loading="lazy"></div>
+          <div class="about-img"><img src="/uploads/site/about-cars.jpg" alt="Паркинг с луксозни автомобили под наем" loading="lazy"></div>
           <div class="about-points">
             <div class="about-point"><div class="about-bullet">${svgCheck}</div><div><h4>Бърза резервация</h4><p>Резервирайте кола за минути с нашата лесна онлайн система.</p></div></div>
             <div class="about-point"><div class="about-bullet">${svgCheck}</div><div><h4>Гъвкави условия</h4><p>Без скрити такси. Безплатна отмяна до 24 часа преди взимане.</p></div></div>
@@ -5269,7 +5269,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
       <!-- VIDEO SECTION -->
       <section class="au-video-section">
         <div class="au-video-inner">
-          <img src="/uploads/site/about-video.jpg" onerror="this.src='about-video.jpg'" alt="Предаване на ключове за автомобил под наем" loading="lazy">
+          <img src="/uploads/site/about-video.jpg" alt="Предаване на ключове за автомобил под наем" loading="lazy">
           <div class="au-video-overlay"></div>
         </div>
       </section>
@@ -5326,7 +5326,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
             </div>
           </div>
           <div class="au-memories-img">
-            <img src="/uploads/site/memories-family.jpg" onerror="this.src='memories-family.jpg'" alt="Щастливо семейство в кола под наем" loading="lazy">
+            <img src="/uploads/site/memories-family.jpg" alt="Щастливо семейство в кола под наем" loading="lazy">
           </div>
         </div>
       </section>
@@ -5341,7 +5341,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
             </div>
             <p class="au-review-text">Наех кола за семейна почивка и останах изключително доволен. Автомобилът беше чист, в перфектно състояние, а обслужването — бързо и професионално. Определено ще се върна отново!</p>
             <div class="au-review-author">
-              <img class="au-review-avatar" src="/uploads/site/face-georgi.jpg" onerror="this.src='face-georgi.jpg'" alt="Георги Димитров">
+              <img class="au-review-avatar" src="/uploads/site/face-georgi.jpg" alt="Георги Димитров">
               <div>
                 <div class="au-review-name">Георги Димитров</div>
                 <div class="au-review-stars">★★★★★</div>
@@ -5354,7 +5354,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
             </div>
             <p class="au-review-text">Много удобен процес на резервация. Плащането по банков път е прозрачно и без изненади. Колата беше точно както в описанието. Препоръчвам на всеки, който търси надеждна услуга!</p>
             <div class="au-review-author">
-              <img class="au-review-avatar" src="/uploads/site/face-maria.jpg" onerror="this.src='face-maria.jpg'" alt="Мария Иванова">
+              <img class="au-review-avatar" src="/uploads/site/face-maria.jpg" alt="Мария Иванова">
               <div>
                 <div class="au-review-name">Мария Иванова</div>
                 <div class="au-review-stars">★★★★★</div>
@@ -5367,7 +5367,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
             </div>
             <p class="au-review-text">Използвам услугите им за служебни пътувания от година насам. Винаги коректни, гъвкави и отзивчиви. Фактурирането е бързо и точно. Отлично партньорство за бизнеса!</p>
             <div class="au-review-author">
-              <img class="au-review-avatar" src="/uploads/site/face-petar.jpg" onerror="this.src='face-petar.jpg'" alt="Петър Стоянов">
+              <img class="au-review-avatar" src="/uploads/site/face-petar.jpg" alt="Петър Стоянов">
               <div>
                 <div class="au-review-name">Петър Стоянов</div>
                 <div class="au-review-stars">★★★★★</div>

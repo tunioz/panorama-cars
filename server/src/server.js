@@ -107,58 +107,38 @@ async function restoreUploads() {
     const files = await prisma.fileStore.findMany();
     let restored = 0;
     for (const f of files) {
+      // Skip bare filenames (legacy root copies) — only restore uploads/ paths
+      if (!f.path.startsWith('uploads/')) continue;
       const abs = path.join(process.cwd(), f.path);
-      if (!fs.existsSync(abs)) {
-        fs.mkdirSync(path.dirname(abs), { recursive: true });
-        fs.writeFileSync(abs, f.data);
-        restored++;
-      }
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, f.data);
+      restored++;
     }
-    if (restored > 0) console.log(`[fileStore] Restored ${restored} files from database`);
-    else if (files.length > 0) console.log(`[fileStore] All ${files.length} files already present on disk`);
+    if (restored > 0) console.log(`[fileStore] Restored ${restored} files from database (DB is source of truth)`);
+    else if (files.length > 0) console.log(`[fileStore] No upload files to restore (${files.length} records in DB)`);
   } catch (e) { console.error('[fileStore] restore error:', e.message); }
 
-  // Seed default site images: ensure they exist on disk AND in FileStore
+  // Seed site images: if on disk but not in DB, persist to FileStore
   try {
     const SITE_IMG_KEYS = [
       'hero-bg', 'about-cars', 'cta-bg', 'about-hero-bg',
       'about-video', 'memories-family',
       'face-georgi', 'face-maria', 'face-petar'
     ];
-    const frontendRoot = path.resolve(__dirname, '..', '..');
     const siteDir = path.join(process.cwd(), 'uploads', 'site');
     fs.mkdirSync(siteDir, { recursive: true });
     let seeded = 0;
     for (const key of SITE_IMG_KEYS) {
       const relPath = `uploads/site/${key}.jpg`;
       const destFile = path.join(siteDir, `${key}.jpg`);
-      // Check if already in FileStore
+      // Already in DB (restored above) — skip
       const inDb = await prisma.fileStore.findUnique({ where: { path: relPath } });
-      if (inDb) {
-        // Make sure it's also on disk
-        if (!fs.existsSync(destFile)) {
-          fs.writeFileSync(destFile, inDb.data);
-          seeded++;
-        }
-        continue;
-      }
-      // Not in DB — find a source file (uploads/site/ on disk OR git-tracked root copy)
-      let srcFile = null;
+      if (inDb) continue;
+      // On disk but not in DB — seed into FileStore
       if (fs.existsSync(destFile)) {
-        srcFile = destFile;
-      } else {
-        const exts = ['.jpg', '.jpeg', '.png', '.webp', '.avif'];
-        for (const ext of exts) {
-          const candidate = path.join(frontendRoot, `${key}${ext}`);
-          if (fs.existsSync(candidate)) { srcFile = candidate; break; }
-        }
+        await fileSave(relPath, destFile, 'image/jpeg');
+        seeded++;
       }
-      if (!srcFile) continue;
-      // Copy to uploads/site/ if not there
-      if (srcFile !== destFile) fs.copyFileSync(srcFile, destFile);
-      // Persist in FileStore so it survives deploys
-      await fileSave(relPath, destFile, 'image/jpeg');
-      seeded++;
     }
     if (seeded > 0) console.log(`[fileStore] Seeded ${seeded} site images into database`);
   } catch (e) { console.error('[fileStore] site image seed error:', e.message); }
@@ -185,6 +165,15 @@ async function restoreUploads() {
       if (carSeeded > 0) console.log(`[fileStore] Seeded ${carSeeded} existing car images into database`);
     }
   } catch (e) { console.error('[fileStore] car image seed error:', e.message); }
+
+  // Clean up legacy bare-filename entries (old root copies no longer needed)
+  try {
+    const legacy = await prisma.fileStore.findMany({ where: { path: { not: { startsWith: 'uploads/' } } } });
+    if (legacy.length > 0) {
+      await prisma.fileStore.deleteMany({ where: { path: { not: { startsWith: 'uploads/' } } } });
+      console.log(`[fileStore] Cleaned up ${legacy.length} legacy root-copy entries`);
+    }
+  } catch (e) { console.error('[fileStore] cleanup error:', e.message); }
 }
 // Run restore on startup (non-blocking)
 restoreUploads();
@@ -1242,21 +1231,8 @@ app.post('/api/site-images/:key', auth('ADMIN'), siteImgUpload.single('image'), 
     try { fs.unlinkSync(path.join(siteImgRoot, old)); } catch {}
   }
 
-  // Copy to frontend root for CSS background-image references
-  const frontendDir = path.resolve(__dirname, '..', '..');
-  const frontendDest = path.join(frontendDir, finalName);
-  fs.copyFileSync(finalPath, frontendDest);
-
-  // Remove old frontend files with different extensions
-  const oldFrontend = fs.readdirSync(frontendDir).filter(f => f.startsWith(key + '.') && f !== finalName && /\.(jpg|jpeg|png|webp|avif)$/i.test(f));
-  for (const old of oldFrontend) {
-    try { fs.unlinkSync(path.join(frontendDir, old)); } catch {}
-  }
-
-  // Persist to DB so it survives deploys
+  // Persist to DB so it survives deploys (DB is the single source of truth)
   await fileSave(`uploads/site/${finalName}`, finalPath, 'image/jpeg');
-  // Also persist the frontend copy
-  await fileSave(finalName, frontendDest, 'image/jpeg');
 
   await logAction(null, 'site-image.upload', { key });
   res.json({ key, url: `/uploads/site/${finalName}` });

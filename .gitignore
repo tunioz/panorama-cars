@@ -31,5 +31,16 @@ server/prisma/dev.db-wal
 # Uploads (managed at runtime)
 server/uploads/
 
+# Site images (managed via admin panel, stored in DB FileStore)
+hero-bg.jpg
+about-cars.jpg
+about-hero-bg.jpg
+about-video.jpg
+cta-bg.jpg
+memories-family.jpg
+face-georgi.jpg
+face-maria.jpg
+face-petar.jpg
+
 # Environment (contains DATABASE_URL with credentials)
 server/.env
