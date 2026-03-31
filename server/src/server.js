@@ -203,6 +203,15 @@ async function logAction(userId, action, meta) {
   try { await prisma.log.create({ data: { userId, action, meta } }); } catch (e) { /* ignore */ }
 }
 const ALLOWED_RES_STATUS = ['REQUESTED','APPROVED','DECLINED','CANCELLED','PAID','COMPLETED'];
+// Valid status transitions (state machine)
+const STATUS_TRANSITIONS = {
+  'REQUESTED': ['APPROVED', 'DECLINED', 'CANCELLED'],
+  'APPROVED':  ['PAID', 'DECLINED', 'CANCELLED'],
+  'DECLINED':  [],  // terminal
+  'CANCELLED': [],  // terminal
+  'PAID':      ['COMPLETED'],
+  'COMPLETED': []   // terminal
+};
 function normalizeStatusValue(v) {
   if (!v) return null;
   const up = v.toString().toUpperCase();
@@ -229,6 +238,20 @@ function cleanDesc(d) {
 
 // Round to 2 decimal places (safe for financial calculations with Float)
 function round2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
+// Sanitize HTML — strip dangerous tags/attributes, keep safe formatting
+function sanitizeHtml(html) {
+  if (!html || typeof html !== 'string') return html;
+  // Remove script tags and their content
+  html = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+  // Remove event handlers (onclick, onerror, onload, etc.)
+  html = html.replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  // Remove javascript: protocol in href/src
+  html = html.replace(/(href|src)\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*')/gi, '$1=""');
+  // Remove iframe, object, embed, form tags
+  html = html.replace(/<\/?(iframe|object|embed|form|input|textarea|button)\b[^>]*>/gi, '');
+  return html;
+}
 
 function normalizeItems(items) {
   if (typeof items === 'string') {
@@ -315,10 +338,16 @@ async function ensureInvoicesForPaidReservations(companyCache) {
 }
 async function createInvoiceForReservation(reservation, type = 'PROFORMA', companyCache) {
   if (!reservation) return null;
-  const company = companyCache || await prisma.companyInfo.findFirst();
-  const car = reservation.car || (reservation.carId ? await prisma.car.findUnique({ where: { id: reservation.carId } }) : null);
+  // Use a serializable transaction to prevent invoice number race conditions
+  return await prisma.$transaction(async (tx) => {
+    return await _createInvoiceInTx(tx, reservation, type, companyCache);
+  }, { isolationLevel: 'Serializable' });
+}
+async function _createInvoiceInTx(tx, reservation, type, companyCache) {
+  const company = companyCache || await tx.companyInfo.findFirst();
+  const car = reservation.car || (reservation.carId ? await tx.car.findUnique({ where: { id: reservation.carId } }) : null);
   const issueDate = new Date();
-  const number = await generateInvoiceNumber(type, issueDate, { proStart: company?.proStart, invStart: company?.invStart });
+  const number = await generateInvoiceNumber(type, issueDate, { proStart: company?.proStart, invStart: company?.invStart }, tx);
   const days = Math.max(1, Math.ceil((new Date(reservation.to) - new Date(reservation.from)) / 86400000));
   const extraDriverRate = Number(company?.extraDriverPrice || 10);
   const insuranceRate = Number(company?.insurancePrice || 15);
@@ -352,7 +381,7 @@ async function createInvoiceForReservation(reservation, type = 'PROFORMA', compa
   const items = normalizeItems(rawItems);
   const { subtotal, vatAmount, total } = calcTotals(items);
   await ensureInvoiceNumber(number, type);
-  return await prisma.invoice.create({
+  return await tx.invoice.create({
     data: {
       reservationId: reservation.id,
       type,
@@ -434,14 +463,24 @@ app.post('/auth/login', authLimiter, async (req, res) => {
 
 // Cars
 app.get('/api/cars', publicReadLimiter, async (req, res) => {
-  const list = await prisma.car.findMany({ orderBy: { createdAt: 'desc' } });
-  const normalized = list.map(c => ({ ...c, images: safeParse(c.images) }));
-  res.json(normalized);
+  try {
+    const list = await prisma.car.findMany({ orderBy: { createdAt: 'desc' } });
+    const normalized = list.map(c => ({ ...c, images: safeParse(c.images) }));
+    res.json(normalized);
+  } catch (e) {
+    console.error('[GET /api/cars]', e?.message);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 app.get('/api/cars/:id', publicReadLimiter, async (req, res) => {
-  const c = await prisma.car.findUnique({ where: { id: req.params.id } });
-  if (!c) return res.status(404).json({ error: 'Not found' });
-  res.json({ ...c, images: safeParse(c.images) });
+  try {
+    const c = await prisma.car.findUnique({ where: { id: req.params.id } });
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    res.json({ ...c, images: safeParse(c.images) });
+  } catch (e) {
+    console.error('[GET /api/cars/:id]', e?.message);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 app.post('/api/cars', auth('ADMIN'), async (req, res) => {
   const b = req.body || {};
@@ -723,9 +762,9 @@ app.post('/api/reservations', apiWriteLimiter, async (req, res) => {
   const wantsInsurance = !!data.insurance;
   const extraDriverRate = Number(company?.extraDriverPrice || 10);
   const insuranceRate = Number(company?.insurancePrice || 15);
-  let total = rate * days;
-  if (wantsExtraDriver) total += extraDriverRate * days;
-  if (wantsInsurance) total += insuranceRate * days;
+  let total = round2(rate * days);
+  if (wantsExtraDriver) total = round2(total + extraDriverRate * days);
+  if (wantsInsurance) total = round2(total + insuranceRate * days);
   const created = await prisma.reservation.create({ data: {
     seq: nextSeq,
     carId: data.carId,
@@ -757,74 +796,12 @@ app.post('/api/reservations', apiWriteLimiter, async (req, res) => {
     currency: data.currency || 'EUR',
     status: 'REQUESTED'
   }});
-  // auto-create proforma if има данни за фактура
+  // Auto-create proforma invoice (uses serializable transaction to prevent number collisions)
   try {
-    // company already loaded above for extras pricing
-    const issueDate = new Date();
-    const number = await generateInvoiceNumber('PROFORMA', issueDate, { proStart: company?.proStart, invStart: company?.invStart });
-    const rawItems = [{
-      description: `Наем на автомобил ${car?.brand||''} ${car?.model||''}`.trim(),
-      qty: days,
-      unitPrice: rate,
-      vatRate: 20
-    }];
-    if (wantsExtraDriver) {
-      rawItems.push({
-        description: 'Допълнителен шофьор',
-        qty: days,
-        unitPrice: extraDriverRate,
-        vatRate: 20
-      });
-    }
-    if (wantsInsurance) {
-      rawItems.push({
-        description: 'Пълно каско (Full Coverage)',
-        qty: days,
-        unitPrice: insuranceRate,
-        vatRate: 20
-      });
-    }
-    const items = normalizeItems(rawItems);
-    const { subtotal, vatAmount, total: invTotal } = calcTotals(items);
-    await ensureInvoiceNumber(number, 'PROFORMA');
-    await prisma.invoice.create({
-      data: {
-        reservationId: created.id,
-        type: 'PROFORMA',
-        number,
-        issueDate,
-        dueDate: null,
-        currency: 'EUR',
-        status: 'ISSUED',
-        supplierName: company?.name || '',
-        supplierEik: company?.eik || '',
-        supplierVat: company?.vat || null,
-        supplierAddr: company?.address || '',
-        supplierMol: company?.mol || null,
-        supplierEmail: company?.email || null,
-        supplierPhone: company?.phone || null,
-        supplierBank: company?.bank || null,
-        supplierIban: company?.iban || null,
-        supplierBic: company?.bic || null,
-        buyerType: created.invoiceType || 'individual',
-        buyerName: created.invoiceName || created.driverName || '',
-        buyerEik: created.invoiceNum || null,
-        buyerVat: created.invoiceVat || null,
-        buyerEgn: created.invoiceEgn || null,
-        buyerMol: created.invoiceMol || null,
-        buyerAddr: created.invoiceAddr || null,
-        buyerEmail: created.invoiceEmail || null,
-        buyerBank: created.invoiceBank || null,
-        buyerIban: created.invoiceIban || null,
-        buyerBic: created.invoiceBic || null,
-        items: JSON.stringify(items),
-        subtotal,
-        vatAmount,
-        total: invTotal
-      }
-    });
+    const fullCreated = { ...created, car };
+    await createInvoiceForReservation(fullCreated, 'PROFORMA', company);
   } catch (e) {
-    // ignore proforma auto-create errors to not block reservation
+    console.error('[reservation] Proforma auto-create error (non-blocking):', e?.message);
   }
   await logAction(null, 'reservation.create', { id: created.id, seq: nextSeq });
 
@@ -894,6 +871,13 @@ app.patch('/api/reservations/:id/status', auth('ADMIN'), async (req, res) => {
   const { status } = req.body;
   const normalized = normalizeStatusValue(status);
   if (!normalized) return res.status(400).json({ error: 'Invalid status' });
+  // Validate status transition
+  const current = await prisma.reservation.findUnique({ where: { id: req.params.id }, select: { status: true } });
+  if (!current) return res.status(404).json({ error: 'Reservation not found' });
+  const allowed = STATUS_TRANSITIONS[current.status] || [];
+  if (!allowed.includes(normalized)) {
+    return res.status(400).json({ error: `Cannot transition from ${current.status} to ${normalized}. Allowed: ${allowed.join(', ') || 'none (terminal state)'}` });
+  }
   const updated = await prisma.reservation.update({ where: { id: req.params.id }, data: { status: normalized } });
   // Ако стане PAID -> издаваме фактура (ако няма)
   if (normalized === 'PAID') {
@@ -1059,14 +1043,19 @@ app.put('/api/invoices/:id', auth('ADMIN'), async (req, res) => {
 
 // Dashboard
 app.get('/api/dashboard/metrics', auth('ADMIN'), async (req, res) => {
-  const totalCars = await prisma.car.count();
-  const totalReservations = await prisma.reservation.count();
-  const totalTurnover = await prisma.invoice.aggregate({ _sum: { total: true } });
-  res.json({
-    totalCars,
-    totalReservations,
-    turnover: totalTurnover._sum.total || 0
-  });
+  try {
+    const totalCars = await prisma.car.count();
+    const totalReservations = await prisma.reservation.count();
+    const totalTurnover = await prisma.invoice.aggregate({ _sum: { total: true } });
+    res.json({
+      totalCars,
+      totalReservations,
+      turnover: round2(totalTurnover._sum.total || 0)
+    });
+  } catch (e) {
+    console.error('[GET /api/dashboard/metrics]', e?.message);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Locations (site settings)
@@ -1177,12 +1166,17 @@ app.get('/api/policies/:slug', publicReadLimiter, async (req, res) => {
 app.put('/api/policies/:slug', auth('ADMIN'), async (req, res) => {
   const { title, content } = req.body || {};
   const slug = req.params.slug;
+  // Validate slug against known policy types
+  const validSlugs = ['privacy', 'terms', 'cancellation', 'insurance', 'cookies'];
+  if (!validSlugs.includes(slug)) return res.status(400).json({ error: 'Invalid policy slug' });
+  // Sanitize HTML content to prevent XSS
+  const safeContent = content !== undefined ? sanitizeHtml(content) : undefined;
   const exists = await prisma.policy.findUnique({ where: { slug } });
   let saved;
   if (exists) {
-    saved = await prisma.policy.update({ where: { slug }, data: { title: title || exists.title, content: content ?? exists.content } });
+    saved = await prisma.policy.update({ where: { slug }, data: { title: title || exists.title, content: safeContent ?? exists.content } });
   } else {
-    saved = await prisma.policy.create({ data: { slug, title: title || slug, content: content || '' } });
+    saved = await prisma.policy.create({ data: { slug, title: title || slug, content: safeContent || '' } });
   }
   await logAction(null, 'policy.update', { slug });
   res.json(saved);
