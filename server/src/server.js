@@ -17,13 +17,14 @@ const prisma = new PrismaClient();
 const app = express();
 
 const PORT = process.env.PORT || 5175;
-const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5174';
 
-// [V6] Warn if using default JWT secret in production
+// [SECURITY] Require JWT_SECRET in production — refuse to start without it
 if (!process.env.JWT_SECRET && process.env.NODE_ENV === 'production') {
-  console.error('[SECURITY] WARNING: JWT_SECRET env var is not set! Using insecure default.');
+  console.error('[SECURITY] FATAL: JWT_SECRET env var is not set in production! Exiting.');
+  process.exit(1);
 }
+const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_change_me_local_only';
 
 // [V3] Startup diagnostics — never log credentials
 console.log('[boot] DATABASE_URL =', process.env.DATABASE_URL ? '***configured***' : 'MISSING');
@@ -33,7 +34,7 @@ console.log('[boot] NODE_ENV =', process.env.NODE_ENV);
 
 // [V9] CORS — restrict in production, permissive in development
 const corsOptions = process.env.NODE_ENV === 'production'
-  ? { origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : true, credentials: true }
+  ? { origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : false, credentials: true }
   : { origin: true, credentials: true };
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
@@ -49,6 +50,7 @@ app.use(morgan('dev'));
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, message: { error: 'Too many login attempts, please try again later.' } });
 const apiWriteLimiter = rateLimit({ windowMs: 60 * 1000, max: 60, message: { error: 'Too many requests, please slow down.' } });
 const newsletterLimiter = rateLimit({ windowMs: 60 * 1000, max: 5, message: { error: 'Too many subscription attempts.' } });
+const publicReadLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, message: { error: 'Too many requests, please slow down.' } });
 // Prevent browser from caching API responses (ensures fresh data after admin edits)
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -200,7 +202,7 @@ function auth(requiredRole) {
 async function logAction(userId, action, meta) {
   try { await prisma.log.create({ data: { userId, action, meta } }); } catch (e) { /* ignore */ }
 }
-const ALLOWED_RES_STATUS = ['REQUESTED','APPROVED','DECLINED','PAID','COMPLETED'];
+const ALLOWED_RES_STATUS = ['REQUESTED','APPROVED','DECLINED','CANCELLED','PAID','COMPLETED'];
 function normalizeStatusValue(v) {
   if (!v) return null;
   const up = v.toString().toUpperCase();
@@ -225,6 +227,9 @@ function cleanDesc(d) {
   return d.trim();
 }
 
+// Round to 2 decimal places (safe for financial calculations with Float)
+function round2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
+
 function normalizeItems(items) {
   if (typeof items === 'string') {
     try { items = JSON.parse(items); } catch { items = []; }
@@ -232,11 +237,11 @@ function normalizeItems(items) {
   if (!Array.isArray(items)) return [];
   return items.map(it => {
     const qty = Number(it.qty ?? it.quantity ?? 1);
-    const unitPrice = Number(it.unitPrice ?? it.price ?? 0); // цена С ДДС
+    const unitPrice = round2(Number(it.unitPrice ?? it.price ?? 0)); // цена С ДДС
     const vatRate = Number(it.vatRate ?? 20);
-    const totalGross = qty * unitPrice; // обща сума С ДДС
-    const totalNet = totalGross / (1 + vatRate / 100); // обща сума БЕЗ ДДС
-    const totalVat = totalGross - totalNet; // сума на ДДС
+    const totalGross = round2(qty * unitPrice); // обща сума С ДДС
+    const totalNet = round2(totalGross / (1 + vatRate / 100)); // обща сума БЕЗ ДДС
+    const totalVat = round2(totalGross - totalNet); // сума на ДДС
     return {
       description: cleanDesc(it.description) || 'Услуга',
       qty,
@@ -249,9 +254,9 @@ function normalizeItems(items) {
   });
 }
 function calcTotals(items) {
-  const subtotal = items.reduce((s, it) => s + (it.totalNet || 0), 0);
-  const vatAmount = items.reduce((s, it) => s + (it.totalVat || 0), 0);
-  const total = items.reduce((s, it) => s + (it.totalGross || 0), 0);
+  const subtotal = round2(items.reduce((s, it) => s + (it.totalNet || 0), 0));
+  const vatAmount = round2(items.reduce((s, it) => s + (it.totalVat || 0), 0));
+  const total = round2(items.reduce((s, it) => s + (it.totalGross || 0), 0));
   return { subtotal, vatAmount, total };
 }
 function fmtDateBg(d) {
@@ -268,10 +273,11 @@ async function ensureInvoiceNumber(number, type = 'PROFORMA') {
     throw new Error('Invoice number already exists');
   }
 }
-async function generateInvoiceNumber(type = 'PROFORMA', issueDate = new Date(), starts = {}) {
+async function generateInvoiceNumber(type = 'PROFORMA', issueDate = new Date(), starts = {}, tx = null) {
+  const db = tx || prisma;
   if (type === 'INVOICE') {
     const invStart = starts.invStart || 1;
-    const list = await prisma.invoice.findMany({ where: { type: 'INVOICE' }, select: { number: true } });
+    const list = await db.invoice.findMany({ where: { type: 'INVOICE' }, select: { number: true } });
     let maxNum = invStart - 1;
     list.forEach(n => {
       const m = n.number?.match(/^(\d{10})$/);
@@ -283,7 +289,7 @@ async function generateInvoiceNumber(type = 'PROFORMA', issueDate = new Date(), 
     return candidate;
   } else {
     const proStart = starts.proStart || 1;
-    const list = await prisma.invoice.findMany({ where: { type: 'PROFORMA' }, select: { number: true } });
+    const list = await db.invoice.findMany({ where: { type: 'PROFORMA' }, select: { number: true } });
     let maxNum = proStart - 1;
     list.forEach(n => {
       const m = n.number?.match(/(?:PF-)?(\d{4,})$/);
@@ -399,14 +405,17 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// [V1] Auto-ensure admin user with known credentials exists (idempotent)
+// [V1] Auto-ensure admin user exists (from env vars or defaults for dev only)
 (async () => {
   try {
-    const evgiUser = await prisma.user.findUnique({ where: { email: 'evgi' } });
-    if (!evgiUser) {
-      const hash = await bcrypt.hash('evgi', 10);
-      await prisma.user.create({ data: { email: 'evgi', passwordHash: hash, role: 'ADMIN' } });
-      console.log('[boot] Admin user "evgi" created');
+    const adminEmail = process.env.ADMIN_EMAIL || (process.env.NODE_ENV !== 'production' ? 'admin' : null);
+    const adminPass = process.env.ADMIN_PASSWORD || (process.env.NODE_ENV !== 'production' ? 'admin' : null);
+    if (!adminEmail || !adminPass) return; // In production, require ADMIN_EMAIL + ADMIN_PASSWORD env vars
+    const existing = await prisma.user.findUnique({ where: { email: adminEmail } });
+    if (!existing) {
+      const hash = await bcrypt.hash(adminPass, 12);
+      await prisma.user.create({ data: { email: adminEmail, passwordHash: hash, role: 'ADMIN' } });
+      console.log(`[boot] Admin user "${adminEmail}" created`);
     }
   } catch (e) { /* ignore — table might not exist yet */ }
 })();
@@ -424,12 +433,12 @@ app.post('/auth/login', authLimiter, async (req, res) => {
 });
 
 // Cars
-app.get('/api/cars', async (req, res) => {
+app.get('/api/cars', publicReadLimiter, async (req, res) => {
   const list = await prisma.car.findMany({ orderBy: { createdAt: 'desc' } });
   const normalized = list.map(c => ({ ...c, images: safeParse(c.images) }));
   res.json(normalized);
 });
-app.get('/api/cars/:id', async (req, res) => {
+app.get('/api/cars/:id', publicReadLimiter, async (req, res) => {
   const c = await prisma.car.findUnique({ where: { id: req.params.id } });
   if (!c) return res.status(404).json({ error: 'Not found' });
   res.json({ ...c, images: safeParse(c.images) });
@@ -541,13 +550,19 @@ app.delete('/api/cars/:id/images', auth('ADMIN'), async (req, res) => {
   if (!car) return res.status(404).json({ error: 'Car not found' });
   const list = safeParse(car.images);
   const next = list.filter(img => img.large !== name && img.thumb !== name);
-  // Try removing files from disk + DB
+  // Try removing files from disk + DB (with path traversal protection)
+  const uploadsRoot = path.resolve(process.cwd(), 'uploads');
   const toRemove = list.filter(img => img.large === name || img.thumb === name);
   for (const img of toRemove) {
     for (const p of [img.large, img.thumb]) {
       if (!p) continue;
       const rel = p.replace(/^\//, '');
-      const abs = path.join(process.cwd(), rel);
+      const abs = path.resolve(process.cwd(), rel);
+      // Prevent path traversal — only delete files under uploads/
+      if (!abs.startsWith(uploadsRoot)) {
+        console.error('[SECURITY] Path traversal blocked:', rel);
+        continue;
+      }
       fs.existsSync(abs) && fs.unlinkSync(abs);
       await fileDelete(rel);
     }
@@ -557,7 +572,7 @@ app.delete('/api/cars/:id/images', auth('ADMIN'), async (req, res) => {
 });
 
 // Parameters
-app.get('/api/params', async (req, res) => {
+app.get('/api/params', publicReadLimiter, async (req, res) => {
   const q = req.query.q;
   const where = q ? { name: { contains: String(q) } } : {};
   const list = await prisma.carParamDef.findMany({ where, orderBy: { name: 'asc' } });
@@ -660,6 +675,26 @@ app.get('/api/reservations', auth('ADMIN'), async (req, res) => {
 });
 app.post('/api/reservations', apiWriteLimiter, async (req, res) => {
   const data = req.body;
+  if (!data || typeof data !== 'object') return res.status(400).json({ error: 'Invalid request body' });
+
+  // Server-side validation
+  const errors = [];
+  if (!data.carId || typeof data.carId !== 'string') errors.push('carId is required');
+  if (!data.from || !data.to) errors.push('from and to dates are required');
+  if (!data.driver?.name || data.driver.name.trim().split(/\s+/).length < 2) errors.push('Driver full name (first + last) is required');
+  if (!data.driver?.phone || !/\d{7,}/.test(data.driver.phone.replace(/\D/g, ''))) errors.push('Valid phone number is required');
+  if (!data.driver?.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.driver.email)) errors.push('Valid email is required');
+  if (!data.driver?.license || data.driver.license.trim().length < 5) errors.push('Driver license number is required (min 5 chars)');
+  // Validate invoice data if provided
+  if (data.invoice?.type === 'company') {
+    if (!data.invoice.name || data.invoice.name.trim().length < 2) errors.push('Company name is required');
+    if (!data.invoice.num || !/^\d{9}(\d{4})?$/.test(data.invoice.num)) errors.push('Valid EIK (9 or 13 digits) is required');
+  }
+  if (data.invoice?.type === 'individual') {
+    if (data.invoice.egn && !/^\d{10}$/.test(data.invoice.egn)) errors.push('EGN must be exactly 10 digits');
+  }
+  if (errors.length) return res.status(400).json({ error: errors.join('; ') });
+
   // simple seq: max+1
   const maxSeq = await prisma.reservation.aggregate({ _max: { seq: true } });
   const nextSeq = (maxSeq._max.seq || 0) + 1;
@@ -1023,7 +1058,7 @@ app.put('/api/invoices/:id', auth('ADMIN'), async (req, res) => {
 });
 
 // Dashboard
-app.get('/api/dashboard/metrics', async (req, res) => {
+app.get('/api/dashboard/metrics', auth('ADMIN'), async (req, res) => {
   const totalCars = await prisma.car.count();
   const totalReservations = await prisma.reservation.count();
   const totalTurnover = await prisma.invoice.aggregate({ _sum: { total: true } });
@@ -1035,7 +1070,7 @@ app.get('/api/dashboard/metrics', async (req, res) => {
 });
 
 // Locations (site settings)
-app.get('/api/locations', async (req, res) => {
+app.get('/api/locations', publicReadLimiter, async (req, res) => {
   const q = req.query.q;
   const where = q ? { label: { contains: String(q) } } : {};
   const list = await prisma.location.findMany({ where, orderBy: { label: 'asc' } });
@@ -1062,11 +1097,15 @@ app.delete('/api/locations/:id', auth('ADMIN'), async (req, res) => {
 });
 
 // Company info
-app.get('/api/company', async (req, res) => {
+app.get('/api/company', publicReadLimiter, async (req, res) => {
   const info = await prisma.companyInfo.findFirst();
   if (info) {
-    // [V4] Never expose SMTP password to frontend
+    // [V4] Never expose SMTP settings or internals to public frontend
     info.smtpPass = info.smtpPass ? '••••••••' : null;
+    info.smtpHost = undefined;
+    info.smtpPort = undefined;
+    info.smtpUser = undefined;
+    info.smtpFrom = undefined;
   }
   res.json(info || null);
 });
@@ -1127,11 +1166,11 @@ app.post('/api/test-smtp', auth('ADMIN'), async (req, res) => {
 });
 
 // Policies
-app.get('/api/policies', async (req, res) => {
+app.get('/api/policies', publicReadLimiter, async (req, res) => {
   const list = await prisma.policy.findMany({ orderBy: { slug: 'asc' } });
   res.json(list);
 });
-app.get('/api/policies/:slug', async (req, res) => {
+app.get('/api/policies/:slug', publicReadLimiter, async (req, res) => {
   const policy = await prisma.policy.findUnique({ where: { slug: req.params.slug } });
   res.json(policy || { slug: req.params.slug, title: '', content: '' });
 });
@@ -1184,7 +1223,7 @@ const SITE_IMAGE_SLOTS = [
 ];
 
 // List all site image slots + current file info
-app.get('/api/site-images', (req, res) => {
+app.get('/api/site-images', publicReadLimiter, (req, res) => {
   const result = SITE_IMAGE_SLOTS.map(slot => {
     // Find existing file for this key (any extension)
     const files = fs.readdirSync(siteImgRoot).filter(f => f.startsWith(slot.key + '.'));
@@ -1298,7 +1337,9 @@ app.get('*', (req, res) => {
 app.use((err, req, res, next) => {
   console.error('[EXPRESS_ERROR]', err?.message || err);
   if (!res.headersSent) {
-    res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
+    // Never leak internal error details in production
+    const message = process.env.NODE_ENV === 'production' ? 'Internal server error' : (err.message || 'Internal server error');
+    res.status(err.status || 500).json({ error: message });
   }
 });
 

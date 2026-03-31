@@ -35,6 +35,9 @@ model Car {
   updatedAt    DateTime      @updatedAt
   params       CarParamValue[]
   reservations Reservation[]
+
+  @@index([status])
+  @@index([brand])
 }
 
 model CarParamDef {
@@ -55,6 +58,9 @@ model CarParamValue {
   valueText String?
   valueNum  Float?
   valueEnum String?
+
+  @@index([carId])
+  @@index([paramId])
 }
 
 model Reservation {
@@ -91,11 +97,16 @@ model Reservation {
   currency   String   @default("EUR")
   createdAt  DateTime           @default(now())
   invoices   Invoice[]
+
+  @@index([carId])
+  @@index([status])
+  @@index([from])
+  @@index([to])
 }
 
 model Invoice {
   id              String       @id @default(cuid())
-  reservation     Reservation  @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  reservation     Reservation  @relation(fields: [reservationId], references: [id], onDelete: Restrict)
   reservationId   String
   type            String
   number          String?      @unique
@@ -133,6 +144,9 @@ model Invoice {
   total           Float?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
+
+  @@index([reservationId])
+  @@index([type])
 }
 
 model Log {
@@ -142,6 +156,9 @@ model Log {
   action    String
   meta      String?
   createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
 }
 
 model Location {
