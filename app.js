@@ -3723,26 +3723,72 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
           <td>${days}</td>
           <td>${r.total ? `€${Number(r.total).toFixed(2)}` : '—'}</td>
           <td>${invoiceCell}</td>
-          <td><select class="select" data-status="${r.id}" style="height:32px;">
-              ${RES_STATUS.map(s => `<option value="${s.value}" ${r.status===s.value?'selected':''}>${s.label}</option>`).join('')}
+          <td><select class="select" data-status="${r.id}" data-current="${r.status}" style="height:32px;">
+              <option value="${r.status}" selected>${statusLabel(r.status)}</option>
           </select></td>
         </tr>
       `;
       }).join('');
+      // Load allowed transitions for each dropdown
+      $$('[data-status]').forEach(async (sel) => {
+        const id = sel.getAttribute('data-status');
+        const currentStatus = sel.getAttribute('data-current');
+        try {
+          const { transitions } = await apiFetch(`/api/reservations/${id}/transitions`);
+          // Add allowed transitions as options
+          (transitions || []).forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.status;
+            opt.textContent = statusLabel(t.status) + (t.requiresCreditNote ? ' ⚠️' : '');
+            sel.appendChild(opt);
+          });
+          if (!transitions || transitions.length === 0) sel.disabled = true;
+        } catch { sel.disabled = true; }
+      });
       $$('[data-status]').forEach(s => s.onchange = async () => {
         const id = s.getAttribute('data-status');
-        const status = s.value;
-        const oldStatus = s.getAttribute('data-old-status') || s.querySelector('option[selected]')?.value;
-        // update local state for instant UI change
-        const row = dataRows.find(x => x.id === id);
-        if (row) row.status = status;
-        renderRows(dataRows);
+        const newStatus = s.value;
+        const oldStatus = s.getAttribute('data-current');
+        if (newStatus === oldStatus) return;
+
+        // First try without confirmation to check if warning needed
         try {
-          await apiFetch(`/api/reservations/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+          const res = await fetch(`${API_BASE}/api/reservations/${id}/status`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('_adminJWT') },
+            body: JSON.stringify({ status: newStatus })
+          });
+          const data = await res.json();
+
+          if (data.needsConfirmation) {
+            // Show confirmation dialog
+            const msgs = [];
+            msgs.push(`Промяна: ${statusLabel(data.from)} → ${statusLabel(data.to)}`);
+            if (data.warning) msgs.push(data.warning);
+            if (data.requiresCreditNote) msgs.push('Това действие е необратимо.');
+            else if (data.to === 'PAID') msgs.push('Това действие е необратимо.');
+            const ok = confirm(msgs.join('\n\n') + '\n\nПотвърждавате ли?');
+            if (!ok) { s.value = oldStatus; return; }
+            // Retry with confirmed flag
+            const confirmed = await apiFetch(`/api/reservations/${id}/status`, {
+              method: 'PATCH', body: JSON.stringify({ status: newStatus, confirmed: true })
+            });
+            const row = dataRows.find(x => x.id === id);
+            if (row) Object.assign(row, confirmed);
+            if (confirmed._generatedInvoice) alert(`Фактура ${confirmed._generatedInvoice} беше издадена автоматично.`);
+            if (confirmed._generatedCreditNote) alert(`Кредитно известие ${confirmed._generatedCreditNote} беше издадено автоматично.`);
+            renderRows(dataRows);
+          } else if (!res.ok) {
+            alert('Грешка: ' + (data.error || 'Невалиден преход'));
+            s.value = oldStatus;
+          } else {
+            // Success without confirmation needed
+            const row = dataRows.find(x => x.id === id);
+            if (row) Object.assign(row, data);
+            renderRows(dataRows);
+          }
         } catch (e) {
-          // Revert on error and show message
-          if (row) row.status = oldStatus || 'REQUESTED';
-          renderRows(dataRows);
+          s.value = oldStatus;
           alert('Грешка при промяна на статус: ' + (e.message || 'Невалиден преход'));
         }
       });

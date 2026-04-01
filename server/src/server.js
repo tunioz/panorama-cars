@@ -204,15 +204,33 @@ async function logAction(userId, action, meta) {
   try { await prisma.log.create({ data: { userId, action, meta } }); } catch (e) { /* ignore */ }
 }
 const ALLOWED_RES_STATUS = ['REQUESTED','APPROVED','DECLINED','CANCELLED','PAID','COMPLETED'];
-// Valid status transitions (state machine) — admin can override most transitions
+// Valid status transitions (state machine)
+// Transitions that are invoice-guarded are handled at runtime in the PATCH endpoint
 const STATUS_TRANSITIONS = {
   'REQUESTED': ['APPROVED', 'DECLINED', 'CANCELLED', 'PAID'],
   'APPROVED':  ['PAID', 'DECLINED', 'CANCELLED'],
   'DECLINED':  ['REQUESTED'],  // admin can re-open
   'CANCELLED': ['REQUESTED'],  // admin can re-open
-  'PAID':      ['COMPLETED'],
-  'COMPLETED': ['PAID']        // admin can mark as paid retroactively
+  'PAID':      ['COMPLETED', 'CANCELLED'],
+  'COMPLETED': ['PAID', 'CANCELLED']
 };
+// Get allowed transitions for a reservation, considering its invoices
+function getAllowedTransitions(status, invoices = []) {
+  const base = STATUS_TRANSITIONS[status] || [];
+  const hasInvoice = invoices.some(inv => (inv.type || '').toUpperCase() === 'INVOICE' && !inv.deletedAt);
+  const hasCreditNote = invoices.some(inv => (inv.type || '').toUpperCase() === 'CREDIT_NOTE' && !inv.deletedAt);
+  return base.map(target => {
+    const info = { status: target, allowed: true, warning: null, requiresCreditNote: false };
+    if (target === 'PAID') {
+      info.warning = 'Ще бъде издадена фактура автоматично.';
+    }
+    if ((target === 'CANCELLED' || target === 'DECLINED') && hasInvoice && !hasCreditNote) {
+      info.requiresCreditNote = true;
+      info.warning = 'Има издадена фактура. Ще бъде издадено кредитно известие автоматично.';
+    }
+    return info;
+  });
+}
 function normalizeStatusValue(v) {
   if (!v) return null;
   const up = v.toString().toUpperCase();
@@ -437,6 +455,74 @@ async function _createInvoiceInTx(tx, reservation, type, companyCache) {
       total
     }
   });
+}
+
+// ─── Credit note creation (кредитно известие) ───
+async function createCreditNote(originalInvoice, reservation) {
+  if (!originalInvoice) return null;
+  return await prisma.$transaction(async (tx) => {
+    const company = await tx.companyInfo.findFirst();
+    const issueDate = new Date();
+    // Generate credit note number: КИ-0001, КИ-0002, etc.
+    const cnList = await tx.invoice.findMany({ where: { type: 'CREDIT_NOTE' }, select: { number: true } });
+    let maxNum = 0;
+    cnList.forEach(n => {
+      const m = n.number?.match(/КИ-(\d{4,})$/);
+      if (m) maxNum = Math.max(maxNum, Number(m[1]));
+    });
+    const number = `КИ-${String(maxNum + 1).padStart(4, '0')}`;
+
+    // Credit note items are negated copies of the original invoice items
+    const origItems = typeof originalInvoice.items === 'string' ? JSON.parse(originalInvoice.items || '[]') : (originalInvoice.items || []);
+    const creditItems = origItems.map(it => ({
+      ...it,
+      description: `Сторно: ${it.description}`,
+      unitPrice: -Math.abs(Number(it.unitPrice || 0)),
+      totalNet: -Math.abs(Number(it.totalNet || 0)),
+      totalVat: -Math.abs(Number(it.totalVat || 0)),
+      totalGross: -Math.abs(Number(it.totalGross || 0))
+    }));
+    const subtotal = round2(creditItems.reduce((s, it) => s + it.totalNet, 0));
+    const vatAmount = round2(creditItems.reduce((s, it) => s + it.totalVat, 0));
+    const total = round2(creditItems.reduce((s, it) => s + it.totalGross, 0));
+
+    return await tx.invoice.create({
+      data: {
+        reservationId: reservation.id,
+        type: 'CREDIT_NOTE',
+        number,
+        issueDate,
+        currency: originalInvoice.currency || 'EUR',
+        status: 'ISSUED',
+        notes: `Кредитно известие към фактура ${originalInvoice.number}`,
+        supplierName: originalInvoice.supplierName,
+        supplierEik: originalInvoice.supplierEik,
+        supplierVat: originalInvoice.supplierVat,
+        supplierAddr: originalInvoice.supplierAddr,
+        supplierMol: originalInvoice.supplierMol,
+        supplierEmail: originalInvoice.supplierEmail,
+        supplierPhone: originalInvoice.supplierPhone,
+        supplierBank: originalInvoice.supplierBank,
+        supplierIban: originalInvoice.supplierIban,
+        supplierBic: originalInvoice.supplierBic,
+        buyerType: originalInvoice.buyerType,
+        buyerName: originalInvoice.buyerName,
+        buyerEik: originalInvoice.buyerEik,
+        buyerVat: originalInvoice.buyerVat,
+        buyerEgn: originalInvoice.buyerEgn,
+        buyerMol: originalInvoice.buyerMol,
+        buyerAddr: originalInvoice.buyerAddr,
+        buyerEmail: originalInvoice.buyerEmail,
+        buyerBank: originalInvoice.buyerBank,
+        buyerIban: originalInvoice.buyerIban,
+        buyerBic: originalInvoice.buyerBic,
+        items: JSON.stringify(creditItems),
+        subtotal,
+        vatAmount,
+        total
+      }
+    });
+  }, { isolationLevel: 'Serializable' });
 }
 
 // ─── Prevent server crashes from unhandled async errors (Express 4) ───
@@ -916,32 +1002,83 @@ app.get('/api/reservations/:id/pdf', auth('ADMIN'), async (req, res) => {
   }
 });
 
+// Get allowed transitions for a specific reservation
+app.get('/api/reservations/:id/transitions', auth('ADMIN'), async (req, res) => {
+  try {
+    const reservation = await prisma.reservation.findUnique({
+      where: { id: req.params.id },
+      include: { invoices: { where: { deletedAt: null } } }
+    });
+    if (!reservation) return res.status(404).json({ error: 'Reservation not found' });
+    const transitions = getAllowedTransitions(reservation.status, reservation.invoices);
+    res.json({ current: reservation.status, transitions });
+  } catch (e) {
+    console.error('[GET /api/reservations/:id/transitions]', e?.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 app.patch('/api/reservations/:id/status', auth('ADMIN'), async (req, res) => {
-  const { status } = req.body;
+  const { status, confirmed } = req.body;
   const normalized = normalizeStatusValue(status);
   if (!normalized) return res.status(400).json({ error: 'Invalid status' });
-  // Validate status transition
-  const current = await prisma.reservation.findUnique({ where: { id: req.params.id }, select: { status: true } });
-  if (!current) return res.status(404).json({ error: 'Reservation not found' });
-  const allowed = STATUS_TRANSITIONS[current.status] || [];
-  if (!allowed.includes(normalized)) {
-    return res.status(400).json({ error: `Cannot transition from ${current.status} to ${normalized}. Allowed: ${allowed.join(', ') || 'none (terminal state)'}` });
+
+  const reservation = await prisma.reservation.findUnique({
+    where: { id: req.params.id },
+    include: { car: true, invoices: { where: { deletedAt: null } } }
+  });
+  if (!reservation) return res.status(404).json({ error: 'Reservation not found' });
+
+  // Validate transition
+  const transitions = getAllowedTransitions(reservation.status, reservation.invoices);
+  const transition = transitions.find(t => t.status === normalized);
+  if (!transition) {
+    const validTargets = transitions.map(t => t.status).join(', ');
+    return res.status(400).json({ error: `Невалиден преход от ${reservation.status} към ${normalized}. Възможни: ${validTargets || 'няма'}` });
   }
+
+  // Require confirmation for actions with warnings
+  if (transition.warning && !confirmed) {
+    return res.status(409).json({
+      needsConfirmation: true,
+      warning: transition.warning,
+      requiresCreditNote: transition.requiresCreditNote,
+      from: reservation.status,
+      to: normalized
+    });
+  }
+
+  // Execute transition
   const updated = await prisma.reservation.update({ where: { id: req.params.id }, data: { status: normalized } });
-  // Ако стане PAID -> издаваме фактура (ако няма)
+
+  // Auto-generate INVOICE when → PAID
   if (normalized === 'PAID') {
     try {
-      const reservation = await prisma.reservation.findUnique({ where: { id: req.params.id }, include: { car: true, invoices: true } });
-      const hasInvoice = (reservation?.invoices || []).some(inv => (inv.type || '').toUpperCase() === 'INVOICE');
-      if (!hasInvoice && reservation) {
-        await createInvoiceForReservation(reservation, 'INVOICE');
+      const hasInvoice = (reservation.invoices || []).some(inv => (inv.type || '').toUpperCase() === 'INVOICE');
+      if (!hasInvoice) {
+        const inv = await createInvoiceForReservation(reservation, 'INVOICE');
+        if (inv) updated._generatedInvoice = inv.number;
       }
     } catch (e) {
       console.error('[reservation.status→PAID] Invoice creation error:', e?.message);
     }
   }
-  await logAction(null, 'reservation.status', { id: updated.id, status });
-  res.json(updated);
+
+  // Auto-generate CREDIT_NOTE when PAID/COMPLETED → CANCELLED (with existing invoice)
+  if ((normalized === 'CANCELLED' || normalized === 'DECLINED') && transition.requiresCreditNote) {
+    try {
+      const invoice = (reservation.invoices || []).find(inv => (inv.type || '').toUpperCase() === 'INVOICE');
+      if (invoice) {
+        const creditNote = await createCreditNote(invoice, reservation);
+        if (creditNote) updated._generatedCreditNote = creditNote.number;
+      }
+    } catch (e) {
+      console.error('[reservation.status→CANCELLED] Credit note creation error:', e?.message);
+    }
+  }
+
+  await logAction(null, 'reservation.status', { id: updated.id, from: reservation.status, to: normalized });
+  res.json(normalizeReservation({ ...updated, invoices: reservation.invoices, car: reservation.car }));
 });
 
 // Invoices
