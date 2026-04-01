@@ -1084,7 +1084,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
             <div class="foot-contact-item"><div class="foot-contact-icon">${svgPhone}</div><div><div class="fc-label">Телефон</div><div class="fc-value">${ftPhone}</div></div></div>
           </div>
           <div class="foot-links">
-            <div><p style="font-size:13px;color:#9CA3AF;line-height:1.6;">Вашият надежден партньор за наем на автомобили. Качество и комфорт на достъпна цена.</p><div class="foot-socials"><a href="#" aria-label="Facebook" rel="noopener noreferrer" target="_blank"><i class="fa-brands fa-facebook-f"></i></a><a href="#" aria-label="Twitter" rel="noopener noreferrer" target="_blank"><i class="fa-brands fa-x-twitter"></i></a><a href="#" aria-label="LinkedIn" rel="noopener noreferrer" target="_blank"><i class="fa-brands fa-linkedin-in"></i></a><a href="#" aria-label="Instagram" rel="noopener noreferrer" target="_blank"><i class="fa-brands fa-instagram"></i></a></div></div>
+            <div><p style="font-size:13px;color:#9CA3AF;line-height:1.6;">Вашият надежден партньор за наем на автомобили. Качество и комфорт на достъпна цена.</p><div class="foot-socials"><a href="https://facebook.com" aria-label="Facebook" rel="noopener noreferrer" target="_blank"><i class="fa-brands fa-facebook-f"></i></a><a href="https://instagram.com" aria-label="Instagram" rel="noopener noreferrer" target="_blank"><i class="fa-brands fa-instagram"></i></a></div></div>
             <div><h4>Бързи връзки</h4><ul><li><a href="#/about-us">За нас</a></li><li><a href="#/vehicles">АвтоПарк</a></li><li><a href="#/about-us" onclick="setTimeout(()=>{const f=document.getElementById('faq');if(f)f.scrollIntoView({behavior:'smooth'})},100)">Въпроси & Отговори</a></li><li><a href="#/policies">Условия и Политики</a></li></ul></div>
             <div><h4>АвтоПарк</h4><ul>${carTypesHTML}</ul></div>
           </div>
@@ -3061,8 +3061,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
     const root = $('#adminRoot');
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    let range = { from: monthStart.toISOString().slice(0,10), to: monthEnd.toISOString().slice(0,10) };
+    let range = { from: monthStart.toISOString().slice(0,10), to: now.toISOString().slice(0,10) };
     root.innerHTML = adminNav('dashboard') + `
       <div class="panel" style="padding:16px; display:grid; gap:12px;">
         <div class="grid-3">
