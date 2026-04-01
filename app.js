@@ -996,7 +996,8 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
     }
   }
   await loadParamDefs();
-  await loadReservations();
+  // Only load reservations if admin is logged in (avoids 401 console error)
+  if (localStorage.getItem('_adminJWT')) await loadReservations();
 
   // Placeholders
   function carPlaceholderSVG(title = 'Car', w = 640, h = 360, hue = 205) {
@@ -1333,14 +1334,14 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
         <div class="hb-group ta-wrap">
           <label>Място на взимане</label>
           <div class="hb-input-wrap">
-            <input id="pickPlace" class="hb-input" placeholder="Enter location">
+            <input id="pickPlace" class="hb-input" placeholder="Въведи локация">
             <span class="hb-icon">${svgLocationDot}</span>
           </div>
         </div>
         <div class="hb-group ta-wrap">
           <label>Място на връщане</label>
           <div class="hb-input-wrap">
-            <input id="dropPlace" class="hb-input" placeholder="Enter location">
+            <input id="dropPlace" class="hb-input" placeholder="Въведи локация">
             <span class="hb-icon">${svgLocationDot}</span>
           </div>
         </div>
@@ -2873,7 +2874,9 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
     if (step === 5) {
       const allBoxes = ['#chkTerms','#chkCancel','#chkInsurancePol','#chkPrivacy'];
       const updateTermsBtn = () => {
-        // Button always enabled — errors shown on click
+        const btn = $('#confirm');
+        const allChecked = allBoxes.every(sel => $(sel)?.checked);
+        if (btn) btn.disabled = !allChecked;
         const err = $('#termsError');
         if (err) err.style.display = 'none';
       };
@@ -5088,7 +5091,7 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
           </div>
         </div>
       </div>
-      <button id="vpSubmit" class="hb-submit" style="margin-top:14px;">Search</button>
+      <button id="vpSubmit" class="hb-submit" style="margin-top:14px;">Търси</button>
     `;
     const labels = (locations||[]).map(l => l.label);
     attachTypeahead($('#vpPick'), labels);

@@ -41,7 +41,8 @@ app.options('*', cors(corsOptions));
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
   contentSecurityPolicy: false,  // CSP is set via meta tag in index.html
-  hsts: { maxAge: 31536000, includeSubDomains: true } // [V16] HSTS
+  hsts: { maxAge: 31536000, includeSubDomains: true }, // [V16] HSTS
+  frameguard: { action: 'deny' } // X-Frame-Options via HTTP header (not meta tag)
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan('dev'));
