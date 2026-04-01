@@ -348,6 +348,7 @@
     { value: 'REQUESTED', label: 'Заявка' },
     { value: 'APPROVED', label: 'Одобрена' },
     { value: 'DECLINED', label: 'Отказана' },
+    { value: 'CANCELLED', label: 'Анулирана' },
     { value: 'PAID', label: 'Платена' },
     { value: 'COMPLETED', label: 'Изпълнена' }
   ];
@@ -3104,19 +3105,20 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
         return start <= t && end >= f; // интерсект с периода
       };
       const inRange = reservations.filter(inPeriod);
+      const paidOrCompleted = inRange.filter(r => ['PAID','COMPLETED'].includes((r.status||'').toUpperCase()));
       const paidList = inRange.filter(r => (r.status||'').toUpperCase() === 'PAID');
       const count = inRange.length;
-      const turnover = paidList.reduce((s,r) => s + Number(r.total||0), 0);
-      const paid = paidList.length;
+      const turnover = paidOrCompleted.reduce((s,r) => s + Number(r.total||0), 0);
+      const paid = paidOrCompleted.length;
       const pending = inRange.filter(r => (r.status||'').toUpperCase() === 'REQUESTED').length;
-      const declined = inRange.filter(r => (r.status||'').toUpperCase() === 'DECLINED').length;
+      const declined = inRange.filter(r => ['DECLINED','CANCELLED'].includes((r.status||'').toUpperCase())).length;
       $('#dashStats').innerHTML = `
         <div class="panel" style="padding:14px;">
           <div class="section-title">Общ брой резервации</div>
           <h2><a href="#/admin/reservations" style="color:inherit;text-decoration:none;">${count}</a></h2>
         </div>
         <div class="panel" style="padding:14px;">
-          <div class="section-title">Платени</div>
+          <div class="section-title">Платени / Изпълнени</div>
           <h2><a href="#/admin/reservations" style="color:inherit;text-decoration:none;">${paid}</a></h2>
         </div>
         <div class="panel" style="padding:14px;">
@@ -3730,12 +3732,19 @@ body{margin:0;padding:0;background:#fff;font-family:"Inter",ui-sans-serif,system
       $$('[data-status]').forEach(s => s.onchange = async () => {
         const id = s.getAttribute('data-status');
         const status = s.value;
+        const oldStatus = s.getAttribute('data-old-status') || s.querySelector('option[selected]')?.value;
         // update local state for instant UI change
         const row = dataRows.find(x => x.id === id);
         if (row) row.status = status;
         renderRows(dataRows);
-        try { await apiFetch(`/api/reservations/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }); }
-        catch {}
+        try {
+          await apiFetch(`/api/reservations/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+        } catch (e) {
+          // Revert on error and show message
+          if (row) row.status = oldStatus || 'REQUESTED';
+          renderRows(dataRows);
+          alert('Грешка при промяна на статус: ' + (e.message || 'Невалиден преход'));
+        }
       });
       $$('tr[data-res]').forEach(row => row.onclick = (e) => {
         if (e.target.closest('select') || e.target.closest('button') || e.target.closest('a')) return;

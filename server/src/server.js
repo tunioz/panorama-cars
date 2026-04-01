@@ -204,14 +204,14 @@ async function logAction(userId, action, meta) {
   try { await prisma.log.create({ data: { userId, action, meta } }); } catch (e) { /* ignore */ }
 }
 const ALLOWED_RES_STATUS = ['REQUESTED','APPROVED','DECLINED','CANCELLED','PAID','COMPLETED'];
-// Valid status transitions (state machine)
+// Valid status transitions (state machine) — admin can override most transitions
 const STATUS_TRANSITIONS = {
-  'REQUESTED': ['APPROVED', 'DECLINED', 'CANCELLED'],
+  'REQUESTED': ['APPROVED', 'DECLINED', 'CANCELLED', 'PAID'],
   'APPROVED':  ['PAID', 'DECLINED', 'CANCELLED'],
-  'DECLINED':  [],  // terminal
-  'CANCELLED': [],  // terminal
+  'DECLINED':  ['REQUESTED'],  // admin can re-open
+  'CANCELLED': ['REQUESTED'],  // admin can re-open
   'PAID':      ['COMPLETED'],
-  'COMPLETED': []   // terminal
+  'COMPLETED': ['PAID']        // admin can mark as paid retroactively
 };
 function normalizeStatusValue(v) {
   if (!v) return null;
@@ -223,7 +223,7 @@ async function normalizeReservationExpiry(resList) {
   for (const r of resList) {
     const st = normalizeStatusValue(r.status);
     const toDate = new Date(r.to);
-    if (st !== 'DECLINED' && st !== 'COMPLETED' && toDate < now) {
+    if (st && st !== 'DECLINED' && st !== 'CANCELLED' && st !== 'COMPLETED' && toDate < now) {
       await prisma.reservation.update({ where: { id: r.id }, data: { status: 'COMPLETED' } });
       r.status = 'COMPLETED';
     }
@@ -937,7 +937,7 @@ app.patch('/api/reservations/:id/status', auth('ADMIN'), async (req, res) => {
         await createInvoiceForReservation(reservation, 'INVOICE');
       }
     } catch (e) {
-      // Do not block status change on invoice creation error
+      console.error('[reservation.status→PAID] Invoice creation error:', e?.message);
     }
   }
   await logAction(null, 'reservation.status', { id: updated.id, status });
